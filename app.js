@@ -2,19 +2,36 @@ const viewer = document.getElementById('viewer3d');
 const viewerStatus = document.getElementById('viewerStatus');
 const hotspotLayer = document.getElementById('hotspotLayer');
 const panel = document.getElementById('zonePanel');
-const backdrop = document.getElementById('backdrop');
 const closePanelButton = document.getElementById('closePanel');
 
 const panelGallery = document.getElementById('panelGallery');
 const panelTitle = document.getElementById('panelTitle');
 const panelDescription = document.getElementById('panelDescription');
 
+const openConfigButton = document.getElementById('openConfig');
+const closeConfigButton = document.getElementById('closeConfig');
+const configPanel = document.getElementById('configPanel');
+const hotspotSelect = document.getElementById('hotspotSelect');
+const addHotspotButton = document.getElementById('addHotspot');
+const deleteHotspotButton = document.getElementById('deleteHotspot');
+const saveHotspotsButton = document.getElementById('saveHotspots');
+const resetHotspotsButton = document.getElementById('resetHotspots');
+
+const inputLabel = document.getElementById('inputLabel');
+const inputTitle = document.getElementById('inputTitle');
+const inputDescription = document.getElementById('inputDescription');
+const inputX = document.getElementById('inputX');
+const inputY = document.getElementById('inputY');
+const inputZ = document.getElementById('inputZ');
+
+const STORAGE_KEY = 'monumento-hotspots-v1';
+
 function buildOfflinePhoto(title, subtitle, colorA, colorB) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="${title}"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="${colorA}"/><stop offset="100%" stop-color="${colorB}"/></linearGradient></defs><rect width="1200" height="720" fill="url(#g)"/><circle cx="180" cy="120" r="140" fill="rgba(255,255,255,0.16)"/><circle cx="980" cy="560" r="220" fill="rgba(255,255,255,0.12)"/><text x="70" y="560" fill="#fff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="64" font-weight="700">${title}</text><text x="72" y="620" fill="rgba(255,255,255,0.92)" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="34">${subtitle}</text></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-const zoneData = [
+const defaultZones = [
   {
     id: 'entrada',
     label: 'Entrada principal',
@@ -53,7 +70,42 @@ const zoneData = [
   }
 ];
 
+let zoneData = loadZones();
+let selectedZoneId = zoneData[0]?.id || null;
+
+function loadZones() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) {
+    return structuredClone(defaultZones);
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed) || !parsed.length) {
+      return structuredClone(defaultZones);
+    }
+
+    return parsed.map((zone, index) => ({
+      id: zone.id || `hotspot-${index + 1}`,
+      label: zone.label || `Hotspot ${index + 1}`,
+      title: zone.title || zone.label || `Hotspot ${index + 1}`,
+      description: zone.description || 'Sin descripción todavía.',
+      photos: Array.isArray(zone.photos) && zone.photos.length ? zone.photos : defaultZones[0].photos,
+      point: Array.isArray(zone.point) && zone.point.length === 3 ? zone.point.map(Number) : [0, 0, 0]
+    }));
+  } catch {
+    return structuredClone(defaultZones);
+  }
+}
+
+function saveZones() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(zoneData));
+  setStatus('Hotspots guardados en este navegador.');
+  setTimeout(hideStatus, 1000);
+}
+
 function setStatus(message, isError = false) {
+  viewerStatus.classList.remove('is-hidden');
   viewerStatus.textContent = message;
   viewerStatus.style.borderColor = isError ? 'rgba(248, 113, 113, 0.65)' : 'rgba(148, 163, 184, 0.4)';
 }
@@ -76,22 +128,30 @@ function openPanel(zone) {
 
   panel.classList.add('is-open');
   panel.setAttribute('aria-hidden', 'false');
-  backdrop.hidden = false;
 }
 
 function closePanel() {
   panel.classList.remove('is-open');
   panel.setAttribute('aria-hidden', 'true');
-  backdrop.hidden = true;
+}
+
+function toggleConfig(show) {
+  configPanel.classList.toggle('is-open', show);
+  configPanel.setAttribute('aria-hidden', String(!show));
+  openConfigButton.setAttribute('aria-expanded', String(show));
 }
 
 closePanelButton.addEventListener('click', closePanel);
-backdrop.addEventListener('click', closePanel);
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closePanel();
+    toggleConfig(false);
   }
 });
+openConfigButton.addEventListener('click', () => {
+  toggleConfig(!configPanel.classList.contains('is-open'));
+});
+closeConfigButton.addEventListener('click', () => toggleConfig(false));
 
 function parseOBJ(text) {
   const vertices = [];
@@ -127,33 +187,32 @@ function parseOBJ(text) {
 }
 
 function buildFallbackMesh() {
-  const vertices = [
-    [-1, -0.8, -1],
-    [1, -0.8, -1],
-    [1, -0.8, 1],
-    [-1, -0.8, 1],
-    [-0.8, 0.8, -0.8],
-    [0.8, 0.8, -0.8],
-    [0.8, 0.8, 0.8],
-    [-0.8, 0.8, 0.8]
-  ];
-
-  const faces = [
-    [0, 1, 2],
-    [0, 2, 3],
-    [4, 5, 6],
-    [4, 6, 7],
-    [0, 1, 5],
-    [0, 5, 4],
-    [1, 2, 6],
-    [1, 6, 5],
-    [2, 3, 7],
-    [2, 7, 6],
-    [3, 0, 4],
-    [3, 4, 7]
-  ];
-
-  return { vertices, faces };
+  return {
+    vertices: [
+      [-1, -0.8, -1],
+      [1, -0.8, -1],
+      [1, -0.8, 1],
+      [-1, -0.8, 1],
+      [-0.8, 0.8, -0.8],
+      [0.8, 0.8, -0.8],
+      [0.8, 0.8, 0.8],
+      [-0.8, 0.8, 0.8]
+    ],
+    faces: [
+      [0, 1, 2],
+      [0, 2, 3],
+      [4, 5, 6],
+      [4, 6, 7],
+      [0, 1, 5],
+      [0, 5, 4],
+      [1, 2, 6],
+      [1, 6, 5],
+      [2, 3, 7],
+      [2, 7, 6],
+      [3, 0, 4],
+      [3, 4, 7]
+    ]
+  };
 }
 
 function normalizeVertices(vertices) {
@@ -213,34 +272,21 @@ async function initViewer() {
   const context = canvas.getContext('2d');
   viewer.appendChild(canvas);
 
-  const hotspots = zoneData.map((zone) => {
-    const button = document.createElement('button');
-    button.className = 'hotspot';
-    button.type = 'button';
-    button.dataset.label = zone.label;
-    button.ariaLabel = zone.label;
-    button.addEventListener('click', () => openPanel(zone));
-    hotspotLayer.appendChild(button);
-    return { zone, button };
-  });
-
   let model = buildFallbackMesh();
-
   try {
     const response = await fetch('assets/models/monumento.obj');
     if (!response.ok) {
       throw new Error('OBJ no disponible');
     }
 
-    const text = await response.text();
-    const parsed = parseOBJ(text);
+    const parsed = parseOBJ(await response.text());
     if (!parsed.vertices.length || !parsed.faces.length) {
       throw new Error('OBJ inválido');
     }
 
     model = parsed;
     setStatus('Modelo cargado en modo offline.');
-    setTimeout(hideStatus, 950);
+    setTimeout(hideStatus, 900);
   } catch {
     setStatus('OBJ no encontrado. Mostrando modelo de prueba offline.', true);
   }
@@ -253,6 +299,117 @@ async function initViewer() {
   let isDragging = false;
   let lastX = 0;
   let lastY = 0;
+
+  let hotspotButtons = [];
+
+  function syncHotspotButtons() {
+    hotspotLayer.innerHTML = '';
+    hotspotButtons = zoneData.map((zone) => {
+      const button = document.createElement('button');
+      button.className = 'hotspot';
+      button.type = 'button';
+      button.dataset.label = zone.label;
+      button.ariaLabel = zone.label;
+      button.addEventListener('click', () => openPanel(zone));
+      hotspotLayer.appendChild(button);
+      return { zone, button };
+    });
+  }
+
+  function refreshSelect() {
+    hotspotSelect.innerHTML = '';
+    zoneData.forEach((zone) => {
+      const option = document.createElement('option');
+      option.value = zone.id;
+      option.textContent = zone.label;
+      hotspotSelect.appendChild(option);
+    });
+
+    if (!selectedZoneId || !zoneData.some((zone) => zone.id === selectedZoneId)) {
+      selectedZoneId = zoneData[0]?.id || null;
+    }
+
+    if (selectedZoneId) {
+      hotspotSelect.value = selectedZoneId;
+    }
+
+    fillFormFromSelection();
+    syncHotspotButtons();
+  }
+
+  function fillFormFromSelection() {
+    const zone = zoneData.find((item) => item.id === selectedZoneId);
+    if (!zone) {
+      return;
+    }
+
+    inputLabel.value = zone.label;
+    inputTitle.value = zone.title;
+    inputDescription.value = zone.description;
+    inputX.value = zone.point[0];
+    inputY.value = zone.point[1];
+    inputZ.value = zone.point[2];
+  }
+
+  function applyFieldChanges() {
+    const zone = zoneData.find((item) => item.id === selectedZoneId);
+    if (!zone) {
+      return;
+    }
+
+    zone.label = inputLabel.value.trim() || 'Hotspot';
+    zone.title = inputTitle.value.trim() || zone.label;
+    zone.description = inputDescription.value.trim() || 'Sin descripción todavía.';
+    zone.point = [Number(inputX.value) || 0, Number(inputY.value) || 0, Number(inputZ.value) || 0];
+
+    refreshSelect();
+    hotspotSelect.value = zone.id;
+  }
+
+  hotspotSelect.addEventListener('change', () => {
+    selectedZoneId = hotspotSelect.value;
+    fillFormFromSelection();
+  });
+
+  [inputLabel, inputTitle, inputDescription, inputX, inputY, inputZ].forEach((field) => {
+    field.addEventListener('input', applyFieldChanges);
+  });
+
+  addHotspotButton.addEventListener('click', () => {
+    const id = `hotspot-${Date.now()}`;
+    zoneData.push({
+      id,
+      label: 'Nuevo hotspot',
+      title: 'Nueva zona',
+      description: 'Describe aquí esta zona.',
+      point: [0, 0, 0],
+      photos: defaultZones[0].photos
+    });
+    selectedZoneId = id;
+    refreshSelect();
+  });
+
+  deleteHotspotButton.addEventListener('click', () => {
+    if (zoneData.length <= 1) {
+      setStatus('Debe quedar al menos un hotspot.', true);
+      return;
+    }
+
+    zoneData = zoneData.filter((zone) => zone.id !== selectedZoneId);
+    selectedZoneId = zoneData[0].id;
+    refreshSelect();
+  });
+
+  saveHotspotsButton.addEventListener('click', saveZones);
+
+  resetHotspotsButton.addEventListener('click', () => {
+    zoneData = structuredClone(defaultZones);
+    selectedZoneId = zoneData[0].id;
+    localStorage.removeItem(STORAGE_KEY);
+    refreshSelect();
+    setStatus('Hotspots restablecidos.');
+    setTimeout(hideStatus, 900);
+  });
 
   function resize() {
     canvas.width = viewer.clientWidth;
@@ -277,10 +434,8 @@ async function initViewer() {
       return;
     }
 
-    const dx = event.clientX - lastX;
-    const dy = event.clientY - lastY;
-    yaw += dx * 0.006;
-    pitch += dy * 0.006;
+    yaw += (event.clientX - lastX) * 0.006;
+    pitch += (event.clientY - lastY) * 0.006;
     pitch = Math.max(-1.45, Math.min(1.45, pitch));
     lastX = event.clientX;
     lastY = event.clientY;
@@ -290,16 +445,16 @@ async function initViewer() {
     'wheel',
     (event) => {
       event.preventDefault();
-      distance += event.deltaY * 0.01;
-      distance = Math.max(2.4, Math.min(10, distance));
+      distance = Math.max(2.4, Math.min(10, distance + event.deltaY * 0.01));
     },
     { passive: false }
   );
 
+  refreshSelect();
+
   function draw() {
     const width = canvas.width;
     const height = canvas.height;
-
     context.clearRect(0, 0, width, height);
 
     const transformed = model.vertices.map((vertex) => rotatePoint(vertex, yaw, pitch));
@@ -309,23 +464,14 @@ async function initViewer() {
         const p1 = transformed[a];
         const p2 = transformed[b];
         const p3 = transformed[c];
-
         const u = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
         const v = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
-        const normal = [
-          u[1] * v[2] - u[2] * v[1],
-          u[2] * v[0] - u[0] * v[2],
-          u[0] * v[1] - u[1] * v[0]
-        ];
-
-        const normalLength = Math.hypot(normal[0], normal[1], normal[2]) || 1;
-        const normalUnit = [normal[0] / normalLength, normal[1] / normalLength, normal[2] / normalLength];
-        const lightDirection = [0.25, 0.7, 0.66];
-        const intensity = Math.max(0.15, normalUnit[0] * lightDirection[0] + normalUnit[1] * lightDirection[1] + normalUnit[2] * lightDirection[2]);
-
+        const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        const n = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+        const dot = (normal[0] * 0.25 + normal[1] * 0.7 + normal[2] * 0.66) / n;
+        const intensity = Math.max(0.15, dot);
         const projected = [projectPoint(p1, width, height, distance), projectPoint(p2, width, height, distance), projectPoint(p3, width, height, distance)];
         const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
-
         return { projected, depth, intensity };
       })
       .sort((a, b) => b.depth - a.depth);
@@ -343,13 +489,13 @@ async function initViewer() {
       context.stroke();
     });
 
-    hotspots.forEach(({ zone, button }) => {
-      const point = rotatePoint(zone.point, yaw, pitch);
-      const screen = projectPoint(point, width, height, distance);
-      const hidden = screen.depth <= 0.2;
+    hotspotButtons.forEach(({ zone, button }) => {
+      const screen = projectPoint(rotatePoint(zone.point, yaw, pitch), width, height, distance);
+      button.dataset.label = zone.label;
+      button.ariaLabel = zone.label;
       button.style.left = `${screen.x}px`;
       button.style.top = `${screen.y}px`;
-      button.style.display = hidden ? 'none' : 'block';
+      button.style.display = screen.depth <= 0.2 ? 'none' : 'block';
     });
 
     requestAnimationFrame(draw);
