@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Navegador 3D de Monumento</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="header">
+        <h1>Plano 3D interactivo del monumento</h1>
+        <p>
+          Rota y explora el modelo para descubrir las zonas destacadas. Al pasar el cursor sobre
+          un hotspot verás su etiqueta y al hacer clic abrirás una ficha detallada.
+        </p>
+      </header>
+
+      <section class="viewer-card" aria-label="Visor 3D">
+        <div id="viewer3d" class="viewer3d" role="img" aria-label="Plano 3D del monumento"></div>
+        <div id="hotspotLayer" class="hotspot-layer" aria-live="polite"></div>
+        <div class="legend">Usa arrastrar para rotar · rueda para zoom · clic en hotspots</div>
+      </section>
+    </main>
+
+    <aside id="zonePanel" class="offcanvas" aria-hidden="true">
+      <button class="offcanvas-close" id="closePanel" aria-label="Cerrar panel">×</button>
+      <div id="panelGallery" class="panel-gallery"></div>
+      <div class="panel-body">
+        <h2 id="panelTitle">Zona</h2>
+        <p id="panelDescription"></p>
+      </div>
+    </aside>
+    <div id="backdrop" class="backdrop" hidden></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
