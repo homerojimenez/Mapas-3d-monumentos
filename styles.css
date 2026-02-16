@@ -47,6 +47,18 @@ body {
   height: min(70vh, 680px);
 }
 
+
+.viewer3d canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+
+.viewer3d canvas:active {
+  cursor: grabbing;
+}
+
 .viewer-status {
   position: absolute;
   left: 50%;

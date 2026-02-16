@@ -9,6 +9,11 @@ const panelGallery = document.getElementById('panelGallery');
 const panelTitle = document.getElementById('panelTitle');
 const panelDescription = document.getElementById('panelDescription');
 
+function buildOfflinePhoto(title, subtitle, colorA, colorB) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="${title}"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="${colorA}"/><stop offset="100%" stop-color="${colorB}"/></linearGradient></defs><rect width="1200" height="720" fill="url(#g)"/><circle cx="180" cy="120" r="140" fill="rgba(255,255,255,0.16)"/><circle cx="980" cy="560" r="220" fill="rgba(255,255,255,0.12)"/><text x="70" y="560" fill="#fff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="64" font-weight="700">${title}</text><text x="72" y="620" fill="rgba(255,255,255,0.92)" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="34">${subtitle}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 const zoneData = [
   {
     id: 'entrada',
@@ -18,8 +23,8 @@ const zoneData = [
     description:
       'Vestíbulo monumental con acceso al circuito principal. Aquí se centraliza la recepción de visitantes y el punto de información histórica.',
     photos: [
-      'https://images.unsplash.com/photo-1479839672679-a46483c0e7c8?auto=format&fit=crop&w=1200&q=70',
-      'https://images.unsplash.com/photo-1534407119910-316180c7f12b?auto=format&fit=crop&w=1200&q=70'
+      buildOfflinePhoto('Entrada principal', 'Recepción y punto de información', '#3b82f6', '#0f172a'),
+      buildOfflinePhoto('Patio de acceso', 'Vista panorámica exterior', '#0ea5e9', '#1e293b')
     ]
   },
   {
@@ -30,8 +35,8 @@ const zoneData = [
     description:
       'Espacio central donde se concentra la mayor carga artística del monumento, con frescos originales y restauraciones documentadas.',
     photos: [
-      'https://images.unsplash.com/photo-1504268497592-3a5fbf7f8f2b?auto=format&fit=crop&w=1200&q=70',
-      'https://images.unsplash.com/photo-1599946347371-68eb71b16afc?auto=format&fit=crop&w=1200&q=70'
+      buildOfflinePhoto('Sala de la Cúpula', 'Zona central de interpretación', '#7c3aed', '#1e1b4b'),
+      buildOfflinePhoto('Detalle interior', 'Elementos decorativos destacados', '#8b5cf6', '#312e81')
     ]
   },
   {
@@ -42,8 +47,8 @@ const zoneData = [
     description:
       'Recorrido longitudinal con exposición de piezas y una lectura cronológica de las distintas fases de ampliación del monumento.',
     photos: [
-      'https://images.unsplash.com/photo-1489516408517-0c0a15662682?auto=format&fit=crop&w=1200&q=70',
-      'https://images.unsplash.com/photo-1470324161839-ce2bb6fa6bc3?auto=format&fit=crop&w=1200&q=70'
+      buildOfflinePhoto('Galería norte', 'Recorrido de piezas históricas', '#f59e0b', '#78350f'),
+      buildOfflinePhoto('Cronología', 'Fases de ampliación del monumento', '#f97316', '#7c2d12')
     ]
   }
 ];
@@ -57,9 +62,9 @@ function hideStatus() {
   viewerStatus.classList.add('is-hidden');
 }
 
-function supportsWebGL() {
+function supportsCanvas() {
   const canvas = document.createElement('canvas');
-  return !!(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+  return !!canvas.getContext('2d');
 }
 
 function openPanel(zone) {
@@ -88,136 +93,269 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
+function parseOBJ(text) {
+  const vertices = [];
+  const faces = [];
+  const lines = text.split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    if (line.startsWith('v ')) {
+      const [, x, y, z] = line.split(/\s+/);
+      vertices.push([Number(x), Number(y), Number(z)]);
+    }
+
+    if (line.startsWith('f ')) {
+      const indices = line
+        .slice(2)
+        .trim()
+        .split(/\s+/)
+        .map((part) => Number(part.split('/')[0]) - 1)
+        .filter((index) => Number.isInteger(index) && index >= 0);
+
+      for (let i = 1; i < indices.length - 1; i += 1) {
+        faces.push([indices[0], indices[i], indices[i + 1]]);
+      }
+    }
+  }
+
+  return { vertices, faces };
+}
+
+function buildFallbackMesh() {
+  const vertices = [
+    [-1, -0.8, -1],
+    [1, -0.8, -1],
+    [1, -0.8, 1],
+    [-1, -0.8, 1],
+    [-0.8, 0.8, -0.8],
+    [0.8, 0.8, -0.8],
+    [0.8, 0.8, 0.8],
+    [-0.8, 0.8, 0.8]
+  ];
+
+  const faces = [
+    [0, 1, 2],
+    [0, 2, 3],
+    [4, 5, 6],
+    [4, 6, 7],
+    [0, 1, 5],
+    [0, 5, 4],
+    [1, 2, 6],
+    [1, 6, 5],
+    [2, 3, 7],
+    [2, 7, 6],
+    [3, 0, 4],
+    [3, 4, 7]
+  ];
+
+  return { vertices, faces };
+}
+
+function normalizeVertices(vertices) {
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+
+  vertices.forEach(([x, y, z]) => {
+    min[0] = Math.min(min[0], x);
+    min[1] = Math.min(min[1], y);
+    min[2] = Math.min(min[2], z);
+    max[0] = Math.max(max[0], x);
+    max[1] = Math.max(max[1], y);
+    max[2] = Math.max(max[2], z);
+  });
+
+  const center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5];
+  const size = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-6);
+  const scale = 2.2 / size;
+
+  return vertices.map(([x, y, z]) => [(x - center[0]) * scale, (y - center[1]) * scale, (z - center[2]) * scale]);
+}
+
+function rotatePoint(point, yaw, pitch) {
+  const [x, y, z] = point;
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+
+  const x1 = x * cy - z * sy;
+  const z1 = x * sy + z * cy;
+  const y2 = y * cp - z1 * sp;
+  const z2 = y * sp + z1 * cp;
+
+  return [x1, y2, z2];
+}
+
+function projectPoint(point, width, height, distance) {
+  const focal = Math.min(width, height) * 0.9;
+  const depth = point[2] + distance;
+  const safeDepth = Math.max(depth, 0.2);
+
+  return {
+    x: width * 0.5 + (point[0] * focal) / safeDepth,
+    y: height * 0.5 - (point[1] * focal) / safeDepth,
+    depth: safeDepth
+  };
+}
+
 async function initViewer() {
-  if (!supportsWebGL()) {
-    setStatus('Tu navegador no tiene WebGL activo. Actívalo o prueba otro navegador.', true);
+  if (!supportsCanvas()) {
+    setStatus('Tu navegador no soporta canvas 2D.', true);
     return;
   }
 
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  viewer.appendChild(canvas);
+
+  const hotspots = zoneData.map((zone) => {
+    const button = document.createElement('button');
+    button.className = 'hotspot';
+    button.type = 'button';
+    button.dataset.label = zone.label;
+    button.ariaLabel = zone.label;
+    button.addEventListener('click', () => openPanel(zone));
+    hotspotLayer.appendChild(button);
+    return { zone, button };
+  });
+
+  let model = buildFallbackMesh();
+
   try {
-    const THREE = await import('https://unpkg.com/three@0.160.1/build/three.module.js');
-    const { OrbitControls } = await import(
-      'https://unpkg.com/three@0.160.1/examples/jsm/controls/OrbitControls.js'
-    );
-    const { OBJLoader } = await import('https://unpkg.com/three@0.160.1/examples/jsm/loaders/OBJLoader.js');
+    const response = await fetch('assets/models/monumento.obj');
+    if (!response.ok) {
+      throw new Error('OBJ no disponible');
+    }
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#020617');
+    const text = await response.text();
+    const parsed = parseOBJ(text);
+    if (!parsed.vertices.length || !parsed.faces.length) {
+      throw new Error('OBJ inválido');
+    }
 
-    const camera = new THREE.PerspectiveCamera(55, viewer.clientWidth / viewer.clientHeight, 0.1, 120);
-    camera.position.set(5.4, 4.1, 5.8);
+    model = parsed;
+    setStatus('Modelo cargado en modo offline.');
+    setTimeout(hideStatus, 950);
+  } catch {
+    setStatus('OBJ no encontrado. Mostrando modelo de prueba offline.', true);
+  }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(viewer.clientWidth, viewer.clientHeight);
-    viewer.appendChild(renderer.domElement);
+  model.vertices = normalizeVertices(model.vertices);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0, 0.8, 0);
-    controls.minDistance = 2.5;
-    controls.maxDistance = 16;
+  let yaw = -0.6;
+  let pitch = 0.35;
+  let distance = 4.2;
+  let isDragging = false;
+  let lastX = 0;
+  let lastY = 0;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.4));
-    scene.add(new THREE.HemisphereLight(0xb1e1ff, 0x334155, 0.75));
+  function resize() {
+    canvas.width = viewer.clientWidth;
+    canvas.height = viewer.clientHeight;
+  }
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    keyLight.position.set(2, 4, 3);
-    scene.add(keyLight);
+  resize();
+  window.addEventListener('resize', resize);
 
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(14, 14),
-      new THREE.MeshStandardMaterial({ color: '#0b1222', roughness: 0.8, metalness: 0.1 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.02;
-    scene.add(floor);
+  canvas.addEventListener('mousedown', (event) => {
+    isDragging = true;
+    lastX = event.clientX;
+    lastY = event.clientY;
+  });
 
-    const hotspots = zoneData.map((zone) => {
-      const button = document.createElement('button');
-      button.className = 'hotspot';
-      button.type = 'button';
-      button.dataset.label = zone.label;
-      button.ariaLabel = zone.label;
-      button.addEventListener('click', () => openPanel(zone));
-      hotspotLayer.appendChild(button);
-      return { zone, button };
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!isDragging) {
+      return;
+    }
+
+    const dx = event.clientX - lastX;
+    const dy = event.clientY - lastY;
+    yaw += dx * 0.006;
+    pitch += dy * 0.006;
+    pitch = Math.max(-1.45, Math.min(1.45, pitch));
+    lastX = event.clientX;
+    lastY = event.clientY;
+  });
+
+  canvas.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      distance += event.deltaY * 0.01;
+      distance = Math.max(2.4, Math.min(10, distance));
+    },
+    { passive: false }
+  );
+
+  function draw() {
+    const width = canvas.width;
+    const height = canvas.height;
+
+    context.clearRect(0, 0, width, height);
+
+    const transformed = model.vertices.map((vertex) => rotatePoint(vertex, yaw, pitch));
+
+    const faces = model.faces
+      .map(([a, b, c]) => {
+        const p1 = transformed[a];
+        const p2 = transformed[b];
+        const p3 = transformed[c];
+
+        const u = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+        const v = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
+        const normal = [
+          u[1] * v[2] - u[2] * v[1],
+          u[2] * v[0] - u[0] * v[2],
+          u[0] * v[1] - u[1] * v[0]
+        ];
+
+        const normalLength = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+        const normalUnit = [normal[0] / normalLength, normal[1] / normalLength, normal[2] / normalLength];
+        const lightDirection = [0.25, 0.7, 0.66];
+        const intensity = Math.max(0.15, normalUnit[0] * lightDirection[0] + normalUnit[1] * lightDirection[1] + normalUnit[2] * lightDirection[2]);
+
+        const projected = [projectPoint(p1, width, height, distance), projectPoint(p2, width, height, distance), projectPoint(p3, width, height, distance)];
+        const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
+
+        return { projected, depth, intensity };
+      })
+      .sort((a, b) => b.depth - a.depth);
+
+    faces.forEach((face) => {
+      const shade = Math.floor(65 + face.intensity * 145);
+      context.beginPath();
+      context.moveTo(face.projected[0].x, face.projected[0].y);
+      context.lineTo(face.projected[1].x, face.projected[1].y);
+      context.lineTo(face.projected[2].x, face.projected[2].y);
+      context.closePath();
+      context.fillStyle = `rgb(${shade - 12}, ${shade}, ${Math.min(255, shade + 24)})`;
+      context.fill();
+      context.strokeStyle = 'rgba(15, 23, 42, 0.26)';
+      context.stroke();
     });
 
-    const loader = new OBJLoader();
-    loader.load(
-      'assets/models/monumento.obj',
-      (obj) => {
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.geometry.computeVertexNormals();
-            child.material = new THREE.MeshStandardMaterial({
-              color: '#94a3b8',
-              roughness: 0.58,
-              metalness: 0.12
-            });
-          }
-        });
+    hotspots.forEach(({ zone, button }) => {
+      const point = rotatePoint(zone.point, yaw, pitch);
+      const screen = projectPoint(point, width, height, distance);
+      const hidden = screen.depth <= 0.2;
+      button.style.left = `${screen.x}px`;
+      button.style.top = `${screen.y}px`;
+      button.style.display = hidden ? 'none' : 'block';
+    });
 
-        const bounds = new THREE.Box3().setFromObject(obj);
-        const center = bounds.getCenter(new THREE.Vector3());
-        const size = bounds.getSize(new THREE.Vector3()).length();
-        const scaleFactor = size > 0 ? 3.2 / size : 1;
-
-        obj.position.sub(center);
-        obj.scale.setScalar(scaleFactor);
-        obj.position.y = 0;
-        scene.add(obj);
-        hideStatus();
-      },
-      undefined,
-      () => {
-        const fallback = new THREE.Mesh(
-          new THREE.BoxGeometry(2.2, 1.5, 2.2),
-          new THREE.MeshStandardMaterial({ color: '#64748b' })
-        );
-        fallback.position.y = 0.75;
-        scene.add(fallback);
-        setStatus('No se encontró el OBJ. Mostrando modelo de prueba.', true);
-      }
-    );
-
-    const projected = new THREE.Vector3();
-    function updateHotspots() {
-      const width = viewer.clientWidth;
-      const height = viewer.clientHeight;
-
-      hotspots.forEach(({ zone, button }) => {
-        const point = new THREE.Vector3(...zone.point);
-        projected.copy(point).project(camera);
-        const x = (projected.x * 0.5 + 0.5) * width;
-        const y = (-projected.y * 0.5 + 0.5) * height;
-        const hidden = projected.z > 1 || projected.z < -1;
-
-        button.style.left = `${x}px`;
-        button.style.top = `${y}px`;
-        button.style.display = hidden ? 'none' : 'block';
-      });
-    }
-
-    function render() {
-      controls.update();
-      updateHotspots();
-      renderer.render(scene, camera);
-      requestAnimationFrame(render);
-    }
-
-    function resize() {
-      camera.aspect = viewer.clientWidth / viewer.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(viewer.clientWidth, viewer.clientHeight);
-    }
-
-    window.addEventListener('resize', resize);
-    render();
-  } catch {
-    setStatus('No se pudo cargar el visor 3D (conexión o bloqueo del navegador).', true);
+    requestAnimationFrame(draw);
   }
+
+  draw();
 }
 
 initViewer();
