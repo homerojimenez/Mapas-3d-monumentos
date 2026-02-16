@@ -26,6 +26,7 @@ const inputZ = document.getElementById('inputZ');
 
 const STORAGE_KEY = 'monumento-hotspots-v1';
 const ADMIN_SLUG = 'admin-hotspots-2026';
+const MODEL_OBJ_PATH = 'assets/models/monumento.obj';
 
 function isAdminMode() {
   const params = new URLSearchParams(window.location.search);
@@ -172,6 +173,78 @@ if (!adminMode) {
   configPanel.hidden = true;
 }
 
+function resolveRelativePath(basePath, relativePath) {
+  const baseSegments = basePath.split('/');
+  baseSegments.pop();
+
+  relativePath.split('/').forEach((segment) => {
+    if (!segment || segment === '.') {
+      return;
+    }
+
+    if (segment === '..') {
+      baseSegments.pop();
+      return;
+    }
+
+    baseSegments.push(segment);
+  });
+
+  return baseSegments.join('/');
+}
+
+function extractObjMaterialReference(objText) {
+  const lines = objText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line.startsWith('mtllib ')) {
+      return line.slice(7).trim();
+    }
+  }
+  return null;
+}
+
+function extractTextureFromMTL(mtlText) {
+  const lines = mtlText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line.startsWith('map_Kd ')) {
+      return line.slice(7).trim();
+    }
+  }
+  return null;
+}
+
+function loadImage(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('No se pudo cargar textura.'));
+    image.src = source;
+  });
+}
+
+async function loadTextureImageFromOBJ(objText, objPath) {
+  const materialReference = extractObjMaterialReference(objText);
+  if (!materialReference) {
+    return null;
+  }
+
+  const mtlPath = resolveRelativePath(objPath, materialReference);
+  const mtlResponse = await fetch(mtlPath);
+  if (!mtlResponse.ok) {
+    return null;
+  }
+
+  const textureReference = extractTextureFromMTL(await mtlResponse.text());
+  if (!textureReference) {
+    return null;
+  }
+
+  const texturePath = resolveRelativePath(mtlPath, textureReference);
+  return loadImage(texturePath);
+}
+
 function parseOBJ(text) {
   const vertices = [];
   const faces = [];
@@ -281,40 +354,6 @@ function projectPoint(point, width, height, distance) {
   };
 }
 
-function createStoneTexturePattern() {
-  const t = document.createElement('canvas');
-  t.width = 96;
-  t.height = 96;
-  const tx = t.getContext('2d');
-
-  const gradient = tx.createLinearGradient(0, 0, 96, 96);
-  gradient.addColorStop(0, '#9aa4b3');
-  gradient.addColorStop(1, '#5f6b7a');
-  tx.fillStyle = gradient;
-  tx.fillRect(0, 0, 96, 96);
-
-  for (let i = 0; i < 600; i += 1) {
-    const x = Math.random() * 96;
-    const y = Math.random() * 96;
-    const radius = Math.random() * 1.8 + 0.2;
-    const alpha = Math.random() * 0.24;
-    tx.fillStyle = `rgba(255,255,255,${alpha})`;
-    tx.beginPath();
-    tx.arc(x, y, radius, 0, Math.PI * 2);
-    tx.fill();
-  }
-
-  for (let i = 0; i < 280; i += 1) {
-    const x = Math.random() * 96;
-    const y = Math.random() * 96;
-    const alpha = Math.random() * 0.18;
-    tx.fillStyle = `rgba(11,18,34,${alpha})`;
-    tx.fillRect(x, y, Math.random() * 3 + 0.6, Math.random() * 3 + 0.6);
-  }
-
-  return t;
-}
-
 async function initViewer() {
   if (!supportsCanvas()) {
     setStatus('Tu navegador no soporta canvas 2D.', true);
@@ -325,26 +364,33 @@ async function initViewer() {
   const context = canvas.getContext('2d');
   viewer.appendChild(canvas);
 
-  const textureCanvas = createStoneTexturePattern();
-  const texturePattern = context.createPattern(textureCanvas, 'repeat');
+  let texturePattern = null;
 
   let model = buildFallbackMesh();
   try {
-    const response = await fetch('assets/models/monumento.obj');
+    const response = await fetch(MODEL_OBJ_PATH);
     if (!response.ok) {
       throw new Error('OBJ no disponible');
     }
 
-    const parsed = parseOBJ(await response.text());
+    const objText = await response.text();
+    const parsed = parseOBJ(objText);
     if (!parsed.vertices.length || !parsed.faces.length) {
       throw new Error('OBJ inválido');
     }
 
     model = parsed;
-    setStatus('Modelo cargado con textura offline.');
+
+    const textureImage = await loadTextureImageFromOBJ(objText, MODEL_OBJ_PATH);
+    if (textureImage) {
+      texturePattern = context.createPattern(textureImage, 'repeat');
+      setStatus('Modelo cargado con textura desde OBJ/MTL.');
+    } else {
+      setStatus('Modelo cargado sin textura (OBJ sin mapa).');
+    }
     setTimeout(hideStatus, 900);
   } catch {
-    setStatus('OBJ no encontrado. Mostrando modelo de prueba con textura.', true);
+    setStatus('OBJ no encontrado. Mostrando modelo de prueba sin textura de archivo.', true);
   }
 
   model.vertices = normalizeVertices(model.vertices);

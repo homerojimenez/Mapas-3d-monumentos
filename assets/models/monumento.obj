@@ -1,3 +1,4 @@
+mtllib monumento.mtl
 o monumento
 v -1.2 0.0  1.2
 v  1.2 0.0  1.2
@@ -9,6 +10,7 @@ v  1.2 1.2 -1.2
 v -1.2 1.2 -1.2
 v  0.0 2.0  0.0
 
+usemtl piedra_monumento
 f 1 2 6 5
 f 2 3 7 6
 f 3 4 8 7
