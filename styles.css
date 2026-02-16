@@ -47,6 +47,26 @@ body {
   height: min(70vh, 680px);
 }
 
+.viewer-status {
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+  max-width: 90%;
+  text-align: center;
+}
+
+.viewer-status.is-hidden {
+  display: none;
+}
+
 .hotspot-layer {
   position: absolute;
   inset: 0;
