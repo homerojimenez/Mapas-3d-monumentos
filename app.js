@@ -25,6 +25,17 @@ const inputY = document.getElementById('inputY');
 const inputZ = document.getElementById('inputZ');
 
 const STORAGE_KEY = 'monumento-hotspots-v1';
+const ADMIN_SLUG = 'admin-hotspots-2026';
+
+function isAdminMode() {
+  const params = new URLSearchParams(window.location.search);
+  const querySlug = params.get('admin');
+  const hashSlug = window.location.hash.replace('#', '');
+  const pathSlug = window.location.pathname.split('/').filter(Boolean).at(-1);
+  return querySlug === ADMIN_SLUG || hashSlug === ADMIN_SLUG || pathSlug === ADMIN_SLUG;
+}
+
+const adminMode = isAdminMode();
 
 function buildOfflinePhoto(title, subtitle, colorA, colorB) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="${title}"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="${colorA}"/><stop offset="100%" stop-color="${colorB}"/></linearGradient></defs><rect width="1200" height="720" fill="url(#g)"/><circle cx="180" cy="120" r="140" fill="rgba(255,255,255,0.16)"/><circle cx="980" cy="560" r="220" fill="rgba(255,255,255,0.12)"/><text x="70" y="560" fill="#fff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="64" font-weight="700">${title}</text><text x="72" y="620" fill="rgba(255,255,255,0.92)" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="34">${subtitle}</text></svg>`;
@@ -136,6 +147,9 @@ function closePanel() {
 }
 
 function toggleConfig(show) {
+  if (!adminMode) {
+    return;
+  }
   configPanel.classList.toggle('is-open', show);
   configPanel.setAttribute('aria-hidden', String(!show));
   openConfigButton.setAttribute('aria-expanded', String(show));
@@ -152,6 +166,11 @@ openConfigButton.addEventListener('click', () => {
   toggleConfig(!configPanel.classList.contains('is-open'));
 });
 closeConfigButton.addEventListener('click', () => toggleConfig(false));
+
+if (!adminMode) {
+  openConfigButton.hidden = true;
+  configPanel.hidden = true;
+}
 
 function parseOBJ(text) {
   const vertices = [];
@@ -262,6 +281,40 @@ function projectPoint(point, width, height, distance) {
   };
 }
 
+function createStoneTexturePattern() {
+  const t = document.createElement('canvas');
+  t.width = 96;
+  t.height = 96;
+  const tx = t.getContext('2d');
+
+  const gradient = tx.createLinearGradient(0, 0, 96, 96);
+  gradient.addColorStop(0, '#9aa4b3');
+  gradient.addColorStop(1, '#5f6b7a');
+  tx.fillStyle = gradient;
+  tx.fillRect(0, 0, 96, 96);
+
+  for (let i = 0; i < 600; i += 1) {
+    const x = Math.random() * 96;
+    const y = Math.random() * 96;
+    const radius = Math.random() * 1.8 + 0.2;
+    const alpha = Math.random() * 0.24;
+    tx.fillStyle = `rgba(255,255,255,${alpha})`;
+    tx.beginPath();
+    tx.arc(x, y, radius, 0, Math.PI * 2);
+    tx.fill();
+  }
+
+  for (let i = 0; i < 280; i += 1) {
+    const x = Math.random() * 96;
+    const y = Math.random() * 96;
+    const alpha = Math.random() * 0.18;
+    tx.fillStyle = `rgba(11,18,34,${alpha})`;
+    tx.fillRect(x, y, Math.random() * 3 + 0.6, Math.random() * 3 + 0.6);
+  }
+
+  return t;
+}
+
 async function initViewer() {
   if (!supportsCanvas()) {
     setStatus('Tu navegador no soporta canvas 2D.', true);
@@ -271,6 +324,9 @@ async function initViewer() {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   viewer.appendChild(canvas);
+
+  const textureCanvas = createStoneTexturePattern();
+  const texturePattern = context.createPattern(textureCanvas, 'repeat');
 
   let model = buildFallbackMesh();
   try {
@@ -285,10 +341,10 @@ async function initViewer() {
     }
 
     model = parsed;
-    setStatus('Modelo cargado en modo offline.');
+    setStatus('Modelo cargado con textura offline.');
     setTimeout(hideStatus, 900);
   } catch {
-    setStatus('OBJ no encontrado. Mostrando modelo de prueba offline.', true);
+    setStatus('OBJ no encontrado. Mostrando modelo de prueba con textura.', true);
   }
 
   model.vertices = normalizeVertices(model.vertices);
@@ -366,50 +422,56 @@ async function initViewer() {
     hotspotSelect.value = zone.id;
   }
 
-  hotspotSelect.addEventListener('change', () => {
-    selectedZoneId = hotspotSelect.value;
-    fillFormFromSelection();
-  });
-
-  [inputLabel, inputTitle, inputDescription, inputX, inputY, inputZ].forEach((field) => {
-    field.addEventListener('input', applyFieldChanges);
-  });
-
-  addHotspotButton.addEventListener('click', () => {
-    const id = `hotspot-${Date.now()}`;
-    zoneData.push({
-      id,
-      label: 'Nuevo hotspot',
-      title: 'Nueva zona',
-      description: 'Describe aquí esta zona.',
-      point: [0, 0, 0],
-      photos: defaultZones[0].photos
+  if (adminMode) {
+    hotspotSelect.addEventListener('change', () => {
+      selectedZoneId = hotspotSelect.value;
+      fillFormFromSelection();
     });
-    selectedZoneId = id;
+
+    [inputLabel, inputTitle, inputDescription, inputX, inputY, inputZ].forEach((field) => {
+      field.addEventListener('input', applyFieldChanges);
+    });
+
+    addHotspotButton.addEventListener('click', () => {
+      const id = `hotspot-${Date.now()}`;
+      zoneData.push({
+        id,
+        label: 'Nuevo hotspot',
+        title: 'Nueva zona',
+        description: 'Describe aquí esta zona.',
+        point: [0, 0, 0],
+        photos: defaultZones[0].photos
+      });
+      selectedZoneId = id;
+      refreshSelect();
+    });
+
+    deleteHotspotButton.addEventListener('click', () => {
+      if (zoneData.length <= 1) {
+        setStatus('Debe quedar al menos un hotspot.', true);
+        return;
+      }
+
+      zoneData = zoneData.filter((zone) => zone.id !== selectedZoneId);
+      selectedZoneId = zoneData[0].id;
+      refreshSelect();
+    });
+
+    saveHotspotsButton.addEventListener('click', saveZones);
+
+    resetHotspotsButton.addEventListener('click', () => {
+      zoneData = structuredClone(defaultZones);
+      selectedZoneId = zoneData[0].id;
+      localStorage.removeItem(STORAGE_KEY);
+      refreshSelect();
+      setStatus('Hotspots restablecidos.');
+      setTimeout(hideStatus, 900);
+    });
+
     refreshSelect();
-  });
-
-  deleteHotspotButton.addEventListener('click', () => {
-    if (zoneData.length <= 1) {
-      setStatus('Debe quedar al menos un hotspot.', true);
-      return;
-    }
-
-    zoneData = zoneData.filter((zone) => zone.id !== selectedZoneId);
-    selectedZoneId = zoneData[0].id;
-    refreshSelect();
-  });
-
-  saveHotspotsButton.addEventListener('click', saveZones);
-
-  resetHotspotsButton.addEventListener('click', () => {
-    zoneData = structuredClone(defaultZones);
-    selectedZoneId = zoneData[0].id;
-    localStorage.removeItem(STORAGE_KEY);
-    refreshSelect();
-    setStatus('Hotspots restablecidos.');
-    setTimeout(hideStatus, 900);
-  });
+  } else {
+    syncHotspotButtons();
+  }
 
   function resize() {
     canvas.width = viewer.clientWidth;
@@ -450,8 +512,6 @@ async function initViewer() {
     { passive: false }
   );
 
-  refreshSelect();
-
   function draw() {
     const width = canvas.width;
     const height = canvas.height;
@@ -469,7 +529,7 @@ async function initViewer() {
         const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
         const n = Math.hypot(normal[0], normal[1], normal[2]) || 1;
         const dot = (normal[0] * 0.25 + normal[1] * 0.7 + normal[2] * 0.66) / n;
-        const intensity = Math.max(0.15, dot);
+        const intensity = Math.max(0.2, dot);
         const projected = [projectPoint(p1, width, height, distance), projectPoint(p2, width, height, distance), projectPoint(p3, width, height, distance)];
         const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
         return { projected, depth, intensity };
@@ -477,15 +537,28 @@ async function initViewer() {
       .sort((a, b) => b.depth - a.depth);
 
     faces.forEach((face) => {
-      const shade = Math.floor(65 + face.intensity * 145);
       context.beginPath();
       context.moveTo(face.projected[0].x, face.projected[0].y);
       context.lineTo(face.projected[1].x, face.projected[1].y);
       context.lineTo(face.projected[2].x, face.projected[2].y);
       context.closePath();
-      context.fillStyle = `rgb(${shade - 12}, ${shade}, ${Math.min(255, shade + 24)})`;
-      context.fill();
-      context.strokeStyle = 'rgba(15, 23, 42, 0.26)';
+
+      if (texturePattern) {
+        context.save();
+        context.clip();
+        context.fillStyle = texturePattern;
+        context.fillRect(0, 0, width, height);
+        context.globalAlpha = 1 - face.intensity * 0.55;
+        context.fillStyle = 'rgba(15, 23, 42, 0.65)';
+        context.fillRect(0, 0, width, height);
+        context.restore();
+      } else {
+        const shade = Math.floor(80 + face.intensity * 125);
+        context.fillStyle = `rgb(${shade - 10}, ${shade}, ${Math.min(255, shade + 20)})`;
+        context.fill();
+      }
+
+      context.strokeStyle = 'rgba(15, 23, 42, 0.34)';
       context.stroke();
     });
 
@@ -502,6 +575,11 @@ async function initViewer() {
   }
 
   draw();
+}
+
+if (!adminMode) {
+  setStatus('Modo visita. Editor desactivado para usuarios finales.');
+  setTimeout(hideStatus, 1400);
 }
 
 initViewer();
