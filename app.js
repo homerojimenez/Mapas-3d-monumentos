@@ -30,6 +30,7 @@ const photoPreview = document.getElementById('photoPreview');
 const STORAGE_KEY = 'monumento-hotspots-v1';
 const ADMIN_SLUG = 'admin-hotspots-2026';
 const MODEL_OBJ_PATH = 'assets/models/monumento.obj';
+const MAX_HOTSPOT_IMAGES = 2;
 
 function isAdminMode() {
   const params = new URLSearchParams(window.location.search);
@@ -124,7 +125,7 @@ function normalizePhotos(rawPhotos) {
     return [];
   }
 
-  return rawPhotos.map((item) => String(item || '').trim()).filter(Boolean);
+  return rawPhotos.map((item) => String(item || '').trim()).filter(Boolean).slice(0, MAX_HOTSPOT_IMAGES);
 }
 
 function photosToMultiline(photos) {
@@ -456,7 +457,11 @@ async function initViewer() {
     zone.title = inputTitle.value.trim() || zone.label;
     zone.description = inputDescription.value.trim() || 'Sin descripción todavía.';
     zone.point = [Number(inputX.value) || 0, Number(inputY.value) || 0, Number(inputZ.value) || 0];
-    zone.photos = parsePhotosFromMultiline(inputPhotos.value);
+    const parsedPhotos = parsePhotosFromMultiline(inputPhotos.value);
+    zone.photos = parsedPhotos.slice(0, MAX_HOTSPOT_IMAGES);
+    if (parsedPhotos.length > MAX_HOTSPOT_IMAGES) {
+      setStatus(`Máximo ${MAX_HOTSPOT_IMAGES} imágenes por hotspot.`, true);
+    }
 
     refreshSelect();
     hotspotSelect.value = zone.id;
@@ -510,13 +515,19 @@ async function initViewer() {
         )
       );
 
-      zone.photos = [...normalizePhotos(zone.photos), ...encodedImages.filter(Boolean)];
+      const currentPhotos = normalizePhotos(zone.photos);
+      const slotsLeft = Math.max(0, MAX_HOTSPOT_IMAGES - currentPhotos.length);
+      const incoming = encodedImages.filter(Boolean).slice(0, slotsLeft);
+      zone.photos = [...currentPhotos, ...incoming].slice(0, MAX_HOTSPOT_IMAGES);
+      if (incoming.length < encodedImages.filter(Boolean).length) {
+        setStatus(`Solo se permiten ${MAX_HOTSPOT_IMAGES} imágenes por hotspot.`, true);
+      }
       inputPhotos.value = photosToMultiline(zone.photos);
       renderPhotoPreview(zone);
       inputPhotoFiles.value = '';
       refreshSelect();
       hotspotSelect.value = zone.id;
-      setStatus('Imágenes añadidas al hotspot.');
+      setStatus('Imágenes actualizadas en el hotspot.');
       setTimeout(hideStatus, 900);
     });
 
