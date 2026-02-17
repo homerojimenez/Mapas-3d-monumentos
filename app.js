@@ -23,6 +23,9 @@ const inputDescription = document.getElementById('inputDescription');
 const inputX = document.getElementById('inputX');
 const inputY = document.getElementById('inputY');
 const inputZ = document.getElementById('inputZ');
+const inputPhotos = document.getElementById('inputPhotos');
+const inputPhotoFiles = document.getElementById('inputPhotoFiles');
+const photoPreview = document.getElementById('photoPreview');
 
 const STORAGE_KEY = 'monumento-hotspots-v1';
 const ADMIN_SLUG = 'admin-hotspots-2026';
@@ -102,7 +105,7 @@ function loadZones() {
       label: zone.label || `Hotspot ${index + 1}`,
       title: zone.title || zone.label || `Hotspot ${index + 1}`,
       description: zone.description || 'Sin descripción todavía.',
-      photos: Array.isArray(zone.photos) && zone.photos.length ? zone.photos : defaultZones[0].photos,
+      photos: normalizePhotos(zone.photos).length ? normalizePhotos(zone.photos) : [...defaultZones[0].photos],
       point: Array.isArray(zone.point) && zone.point.length === 3 ? zone.point.map(Number) : [0, 0, 0]
     }));
   } catch {
@@ -114,6 +117,44 @@ function saveZones() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(zoneData));
   setStatus('Hotspots guardados en este navegador.');
   setTimeout(hideStatus, 1000);
+}
+
+function normalizePhotos(rawPhotos) {
+  if (!Array.isArray(rawPhotos)) {
+    return [];
+  }
+
+  return rawPhotos.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function photosToMultiline(photos) {
+  return normalizePhotos(photos).join('\n');
+}
+
+function parsePhotosFromMultiline(value) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function renderPhotoPreview(zone) {
+  if (!zone) {
+    photoPreview.innerHTML = '';
+    return;
+  }
+
+  const photos = normalizePhotos(zone.photos);
+  photoPreview.innerHTML = photos
+    .map(
+      (src, index) => `
+        <div class="photo-item">
+          <img src="${src}" alt="Imagen ${index + 1}" loading="lazy" />
+          <button class="photo-remove" type="button" data-photo-index="${index}" aria-label="Quitar imagen">×</button>
+        </div>
+      `
+    )
+    .join('');
 }
 
 function setStatus(message, isError = false) {
@@ -134,7 +175,8 @@ function supportsCanvas() {
 function openPanel(zone) {
   panelTitle.textContent = zone.title;
   panelDescription.textContent = zone.description;
-  panelGallery.innerHTML = zone.photos
+  const panelPhotos = normalizePhotos(zone.photos).length ? normalizePhotos(zone.photos) : defaultZones[0].photos;
+  panelGallery.innerHTML = panelPhotos
     .map((src, index) => `<img src="${src}" alt="${zone.title} imagen ${index + 1}" loading="lazy" />`)
     .join('');
 
@@ -451,6 +493,8 @@ async function initViewer() {
     inputX.value = zone.point[0];
     inputY.value = zone.point[1];
     inputZ.value = zone.point[2];
+    inputPhotos.value = photosToMultiline(zone.photos);
+    renderPhotoPreview(zone);
   }
 
   function applyFieldChanges() {
@@ -463,6 +507,7 @@ async function initViewer() {
     zone.title = inputTitle.value.trim() || zone.label;
     zone.description = inputDescription.value.trim() || 'Sin descripción todavía.';
     zone.point = [Number(inputX.value) || 0, Number(inputY.value) || 0, Number(inputZ.value) || 0];
+    zone.photos = parsePhotosFromMultiline(inputPhotos.value);
 
     refreshSelect();
     hotspotSelect.value = zone.id;
@@ -474,8 +519,56 @@ async function initViewer() {
       fillFormFromSelection();
     });
 
-    [inputLabel, inputTitle, inputDescription, inputX, inputY, inputZ].forEach((field) => {
+    [inputLabel, inputTitle, inputDescription, inputX, inputY, inputZ, inputPhotos].forEach((field) => {
       field.addEventListener('input', applyFieldChanges);
+    });
+
+    photoPreview.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-photo-index]');
+      if (!target) {
+        return;
+      }
+
+      const zone = zoneData.find((item) => item.id === selectedZoneId);
+      if (!zone) {
+        return;
+      }
+
+      const index = Number(target.dataset.photoIndex);
+      zone.photos = normalizePhotos(zone.photos).filter((_, idx) => idx !== index);
+      inputPhotos.value = photosToMultiline(zone.photos);
+      renderPhotoPreview(zone);
+      refreshSelect();
+      hotspotSelect.value = zone.id;
+    });
+
+    inputPhotoFiles.addEventListener('change', async () => {
+      const zone = zoneData.find((item) => item.id === selectedZoneId);
+      if (!zone || !inputPhotoFiles.files?.length) {
+        return;
+      }
+
+      const files = Array.from(inputPhotoFiles.files);
+      const encodedImages = await Promise.all(
+        files.map(
+          (file) =>
+            new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ''));
+              reader.onerror = () => resolve('');
+              reader.readAsDataURL(file);
+            })
+        )
+      );
+
+      zone.photos = [...normalizePhotos(zone.photos), ...encodedImages.filter(Boolean)];
+      inputPhotos.value = photosToMultiline(zone.photos);
+      renderPhotoPreview(zone);
+      inputPhotoFiles.value = '';
+      refreshSelect();
+      hotspotSelect.value = zone.id;
+      setStatus('Imágenes añadidas al hotspot.');
+      setTimeout(hideStatus, 900);
     });
 
     addHotspotButton.addEventListener('click', () => {
@@ -486,7 +579,7 @@ async function initViewer() {
         title: 'Nueva zona',
         description: 'Describe aquí esta zona.',
         point: [0, 0, 0],
-        photos: defaultZones[0].photos
+        photos: []
       });
       selectedZoneId = id;
       refreshSelect();
