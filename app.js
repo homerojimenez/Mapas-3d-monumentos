@@ -604,6 +604,8 @@ async function initViewer() {
     const width = canvas.width;
     const height = canvas.height;
     context.clearRect(0, 0, width, height);
+    context.fillStyle = "#f8f5ef";
+    context.fillRect(0, 0, width, height);
 
     const transformed = model.vertices.map((vertex) => rotatePoint(vertex, yaw, pitch));
 

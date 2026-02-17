@@ -3,6 +3,7 @@
   --surface: #ffffff;
   --accent: #0ea5e9;
   --text: #1e293b;
+  --viewer-bg: #f8f5ef;
 }
 
 * {
@@ -30,7 +31,7 @@ body {
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
-  background: #020617;
+  background: var(--viewer-bg);
 }
 
 .viewer3d {
