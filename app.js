@@ -215,80 +215,9 @@ if (!adminMode) {
   configPanel.hidden = true;
 }
 
-function resolveRelativePath(basePath, relativePath) {
-  const baseSegments = basePath.split('/');
-  baseSegments.pop();
-
-  relativePath.split('/').forEach((segment) => {
-    if (!segment || segment === '.') {
-      return;
-    }
-
-    if (segment === '..') {
-      baseSegments.pop();
-      return;
-    }
-
-    baseSegments.push(segment);
-  });
-
-  return baseSegments.join('/');
-}
-
-function extractObjMaterialReference(objText) {
-  const lines = objText.split(/\r?\n/);
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (line.startsWith('mtllib ')) {
-      return line.slice(7).trim();
-    }
-  }
-  return null;
-}
-
-function extractTextureFromMTL(mtlText) {
-  const lines = mtlText.split(/\r?\n/);
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (line.startsWith('map_Kd ')) {
-      return line.slice(7).trim();
-    }
-  }
-  return null;
-}
-
-function loadImage(source) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('No se pudo cargar textura.'));
-    image.src = source;
-  });
-}
-
-async function loadTextureImageFromOBJ(objText, objPath) {
-  const materialReference = extractObjMaterialReference(objText);
-  if (!materialReference) {
-    return null;
-  }
-
-  const mtlPath = resolveRelativePath(objPath, materialReference);
-  const mtlResponse = await fetch(mtlPath);
-  if (!mtlResponse.ok) {
-    return null;
-  }
-
-  const textureReference = extractTextureFromMTL(await mtlResponse.text());
-  if (!textureReference) {
-    return null;
-  }
-
-  const texturePath = resolveRelativePath(mtlPath, textureReference);
-  return loadImage(texturePath);
-}
-
 function parseOBJ(text) {
   const vertices = [];
+  const vertexColors = [];
   const faces = [];
   const lines = text.split(/\r?\n/);
 
@@ -299,8 +228,22 @@ function parseOBJ(text) {
     }
 
     if (line.startsWith('v ')) {
-      const [, x, y, z] = line.split(/\s+/);
+      const [, x, y, z, r, g, b] = line.split(/\s+/);
       vertices.push([Number(x), Number(y), Number(z)]);
+
+      if ([r, g, b].every((value) => value !== undefined)) {
+        const normalizeColor = (value) => {
+          const num = Number(value);
+          if (Number.isNaN(num)) {
+            return 0.65;
+          }
+          return num > 1 ? Math.max(0, Math.min(1, num / 255)) : Math.max(0, Math.min(1, num));
+        };
+
+        vertexColors.push([normalizeColor(r), normalizeColor(g), normalizeColor(b)]);
+      } else {
+        vertexColors.push([0.63, 0.68, 0.74]);
+      }
     }
 
     if (line.startsWith('f ')) {
@@ -317,7 +260,7 @@ function parseOBJ(text) {
     }
   }
 
-  return { vertices, faces };
+  return { vertices, vertexColors, faces };
 }
 
 function buildFallbackMesh() {
@@ -331,6 +274,16 @@ function buildFallbackMesh() {
       [0.8, 0.8, -0.8],
       [0.8, 0.8, 0.8],
       [-0.8, 0.8, 0.8]
+    ],
+    vertexColors: [
+      [0.56, 0.61, 0.68],
+      [0.64, 0.69, 0.76],
+      [0.6, 0.66, 0.74],
+      [0.54, 0.6, 0.67],
+      [0.75, 0.78, 0.82],
+      [0.7, 0.74, 0.79],
+      [0.73, 0.77, 0.81],
+      [0.67, 0.72, 0.78]
     ],
     faces: [
       [0, 1, 2],
@@ -406,8 +359,6 @@ async function initViewer() {
   const context = canvas.getContext('2d');
   viewer.appendChild(canvas);
 
-  let texturePattern = null;
-
   let model = buildFallbackMesh();
   try {
     const response = await fetch(MODEL_OBJ_PATH);
@@ -423,16 +374,14 @@ async function initViewer() {
 
     model = parsed;
 
-    const textureImage = await loadTextureImageFromOBJ(objText, MODEL_OBJ_PATH);
-    if (textureImage) {
-      texturePattern = context.createPattern(textureImage, 'repeat');
-      setStatus('Modelo cargado con textura desde OBJ/MTL.');
+    if (parsed.vertexColors.length) {
+      setStatus('Modelo cargado con color/textura embebida en el OBJ.');
     } else {
-      setStatus('Modelo cargado sin textura (OBJ sin mapa).');
+      setStatus('Modelo cargado sin color embebido (se usa sombreado base).');
     }
     setTimeout(hideStatus, 900);
   } catch {
-    setStatus('OBJ no encontrado. Mostrando modelo de prueba sin textura de archivo.', true);
+    setStatus('OBJ no encontrado. Mostrando modelo de prueba.', true);
   }
 
   model.vertices = normalizeVertices(model.vertices);
@@ -671,7 +620,15 @@ async function initViewer() {
         const intensity = Math.max(0.2, dot);
         const projected = [projectPoint(p1, width, height, distance), projectPoint(p2, width, height, distance), projectPoint(p3, width, height, distance)];
         const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
-        return { projected, depth, intensity };
+        const c1 = model.vertexColors[a] || [0.62, 0.67, 0.74];
+        const c2 = model.vertexColors[b] || [0.62, 0.67, 0.74];
+        const c3 = model.vertexColors[c] || [0.62, 0.67, 0.74];
+        const baseColor = [
+          (c1[0] + c2[0] + c3[0]) / 3,
+          (c1[1] + c2[1] + c3[1]) / 3,
+          (c1[2] + c2[2] + c3[2]) / 3
+        ];
+        return { projected, depth, intensity, baseColor };
       })
       .sort((a, b) => b.depth - a.depth);
 
@@ -682,20 +639,12 @@ async function initViewer() {
       context.lineTo(face.projected[2].x, face.projected[2].y);
       context.closePath();
 
-      if (texturePattern) {
-        context.save();
-        context.clip();
-        context.fillStyle = texturePattern;
-        context.fillRect(0, 0, width, height);
-        context.globalAlpha = 1 - face.intensity * 0.55;
-        context.fillStyle = 'rgba(15, 23, 42, 0.65)';
-        context.fillRect(0, 0, width, height);
-        context.restore();
-      } else {
-        const shade = Math.floor(80 + face.intensity * 125);
-        context.fillStyle = `rgb(${shade - 10}, ${shade}, ${Math.min(255, shade + 20)})`;
-        context.fill();
-      }
+      const light = 0.42 + face.intensity * 0.78;
+      const red = Math.min(255, Math.floor(face.baseColor[0] * 255 * light));
+      const green = Math.min(255, Math.floor(face.baseColor[1] * 255 * light));
+      const blue = Math.min(255, Math.floor(face.baseColor[2] * 255 * light));
+      context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+      context.fill();
 
       context.strokeStyle = 'rgba(15, 23, 42, 0.34)';
       context.stroke();
