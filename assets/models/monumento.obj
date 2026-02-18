@@ -1,3 +1,5 @@
+mtllib monumento.mtl
+usemtl material_monumento
 o monumento
 v -1.2 0.0  1.2  0.55 0.62 0.72
 v  1.2 0.0  1.2  0.60 0.67 0.77

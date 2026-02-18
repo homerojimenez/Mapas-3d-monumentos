@@ -303,6 +303,110 @@ function parseMTL(text) {
   return materials;
 }
 
+async function getAverageColorFromImage(imagePath) {
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = imagePath;
+    });
+
+    const sampleCanvas = document.createElement('canvas');
+    const sampleSize = 32;
+    sampleCanvas.width = sampleSize;
+    sampleCanvas.height = sampleSize;
+    const sampleContext = sampleCanvas.getContext('2d');
+    sampleContext.drawImage(image, 0, 0, sampleSize, sampleSize);
+    const { data } = sampleContext.getImageData(0, 0, sampleSize, sampleSize);
+
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3] / 255;
+      if (alpha <= 0.02) {
+        continue;
+      }
+      r += (data[i] / 255) * alpha;
+      g += (data[i + 1] / 255) * alpha;
+      b += (data[i + 2] / 255) * alpha;
+      count += alpha;
+    }
+
+    if (!count) {
+      return null;
+    }
+
+    return [r / count, g / count, b / count];
+  } catch {
+    return null;
+  }
+}
+
+function extractMapKdPath(rawValue) {
+  if (!rawValue) {
+    return '';
+  }
+
+  const tokens = rawValue.split(/\s+/).filter(Boolean);
+  const fileTokens = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.startsWith('-')) {
+      const option = token.toLowerCase();
+      const optionValueCounts = {
+        '-blendu': 1,
+        '-blendv': 1,
+        '-boost': 1,
+        '-mm': 2,
+        '-o': 3,
+        '-s': 3,
+        '-t': 3,
+        '-texres': 1,
+        '-clamp': 1,
+        '-bm': 1,
+        '-imfchan': 1,
+        '-type': 1
+      };
+      index += optionValueCounts[option] || 0;
+      continue;
+    }
+
+    fileTokens.push(token);
+  }
+
+  return fileTokens.join(' ').trim();
+}
+
+async function enrichMaterialColorsFromMapKd(materials, mtlPath) {
+  const entries = Object.entries(materials || {});
+  if (!entries.length) {
+    return materials;
+  }
+
+  await Promise.all(
+    entries.map(async ([name, material]) => {
+      const mapPath = extractMapKdPath(material.mapKd);
+      if (!mapPath) {
+        return;
+      }
+
+      const resolvedPath = resolveRelativePath(mtlPath, mapPath);
+      const averageColor = await getAverageColorFromImage(resolvedPath);
+      if (averageColor) {
+        materials[name].kd = averageColor;
+      }
+    })
+  );
+
+  return materials;
+}
+
 function parseOBJ(text) {
   const vertices = [];
   const vertexColors = [];
@@ -476,17 +580,28 @@ async function initViewer() {
     }
 
     const materials = {};
-    if (parsed.mtllib) {
-      const mtlPath = resolveRelativePath(MODEL_OBJ_PATH, parsed.mtllib);
+    const guessedMtlPath = MODEL_OBJ_PATH.replace(/\.obj$/i, '.mtl');
+    const mtlCandidates = [parsed.mtllib ? resolveRelativePath(MODEL_OBJ_PATH, parsed.mtllib) : '', guessedMtlPath].filter(Boolean);
+    let loadedMtlPath = '';
+
+    for (const mtlPath of [...new Set(mtlCandidates)]) {
       try {
         const mtlResponse = await fetch(mtlPath);
-        if (mtlResponse.ok) {
-          const mtlText = await mtlResponse.text();
-          Object.assign(materials, parseMTL(mtlText));
+        if (!mtlResponse.ok) {
+          continue;
         }
+
+        const mtlText = await mtlResponse.text();
+        Object.assign(materials, parseMTL(mtlText));
+        loadedMtlPath = mtlPath;
+        break;
       } catch {
-        // Continúa sin MTL
+        // prueba siguiente candidato
       }
+    }
+
+    if (loadedMtlPath) {
+      await enrichMaterialColorsFromMapKd(materials, loadedMtlPath);
     }
 
     model = { ...parsed, materials };
