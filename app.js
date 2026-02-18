@@ -32,6 +32,7 @@ const MODEL_OBJ_PATH = 'assets/models/monumento.obj';
 const HOTSPOTS_JSON_URL = 'assets/hotspots.json';
 const SAVE_ENDPOINT_URL = 'save-hotspots.php';
 const MAX_HOTSPOT_IMAGES = 2;
+const MAX_RENDER_FACES = 18000;
 
 function isAdminMode() {
   const params = new URLSearchParams(window.location.search);
@@ -383,10 +384,11 @@ function extractMapKdPath(rawValue) {
   return fileTokens.join(' ').trim();
 }
 
-async function enrichMaterialColorsFromMapKd(materials, mtlPath) {
+async function enrichMaterials(materials, mtlPath, context) {
+  const patterns = {};
   const entries = Object.entries(materials || {});
   if (!entries.length) {
-    return materials;
+    return { materials, patterns };
   }
 
   await Promise.all(
@@ -401,10 +403,27 @@ async function enrichMaterialColorsFromMapKd(materials, mtlPath) {
       if (averageColor) {
         materials[name].kd = averageColor;
       }
+
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = resolvedPath;
+        });
+
+        const pattern = context.createPattern(image, 'repeat');
+        if (pattern) {
+          patterns[name] = pattern;
+        }
+      } catch {
+        // Si no se puede crear patrón, usamos color Kd
+      }
     })
   );
 
-  return materials;
+  return { materials, patterns };
 }
 
 function parseOBJ(text) {
@@ -503,7 +522,7 @@ function buildFallbackMesh() {
     { indices: [3, 4, 7], material: '' }
   ];
 
-  return { vertices, vertexColors, faces, materials: {} };
+  return { vertices, vertexColors, faces, materials: {}, patterns: {} };
 }
 
 function normalizeVertices(vertices) {
@@ -562,7 +581,7 @@ async function initViewer() {
   await loadZonesFromServer();
 
   const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
+  const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
   viewer.appendChild(canvas);
 
   let model = buildFallbackMesh();
@@ -600,18 +619,20 @@ async function initViewer() {
       }
     }
 
+    let patterns = {};
     if (loadedMtlPath) {
-      await enrichMaterialColorsFromMapKd(materials, loadedMtlPath);
+      const enriched = await enrichMaterials(materials, loadedMtlPath, context);
+      patterns = enriched.patterns;
     }
 
-    model = { ...parsed, materials };
+    model = { ...parsed, materials, patterns };
 
     if (Object.keys(materials).length) {
-      setStatus('Modelo OBJ cargado con materiales MTL.');
+      setStatus('Modelo OBJ cargado con materiales y texturas.');
     } else {
       setStatus('Modelo OBJ cargado. MTL no encontrado: usando color del OBJ.');
     }
-    setTimeout(hideStatus, 1300);
+    setTimeout(hideStatus, 1400);
   } catch {
     setStatus('No se pudo cargar el modelo OBJ. Mostrando modelo de prueba.', true);
   }
@@ -624,8 +645,13 @@ async function initViewer() {
   let isDragging = false;
   let lastX = 0;
   let lastY = 0;
+  let needsRender = true;
 
   let hotspotButtons = [];
+
+  function requestRender() {
+    needsRender = true;
+  }
 
   function syncHotspotButtons() {
     hotspotLayer.innerHTML = '';
@@ -639,6 +665,7 @@ async function initViewer() {
       hotspotLayer.appendChild(button);
       return { zone, button };
     });
+    requestRender();
   }
 
   function fillFormFromSelection() {
@@ -696,12 +723,14 @@ async function initViewer() {
 
     refreshSelect();
     hotspotSelect.value = zone.id;
+    requestRender();
   }
 
   if (adminMode) {
     hotspotSelect.addEventListener('change', () => {
       selectedZoneId = hotspotSelect.value;
       fillFormFromSelection();
+      requestRender();
     });
 
     [inputLabel, inputTitle, inputDescription, inputX, inputY, inputZ, inputPhotos].forEach((field) => {
@@ -725,6 +754,7 @@ async function initViewer() {
       renderPhotoPreview(zone);
       refreshSelect();
       hotspotSelect.value = zone.id;
+      requestRender();
     });
 
     inputPhotoFiles.addEventListener('change', async () => {
@@ -760,6 +790,7 @@ async function initViewer() {
       hotspotSelect.value = zone.id;
       setStatus('Imágenes actualizadas en el hotspot.');
       setTimeout(hideStatus, 900);
+      requestRender();
     });
 
     addHotspotButton.addEventListener('click', () => {
@@ -774,6 +805,7 @@ async function initViewer() {
       });
       selectedZoneId = id;
       refreshSelect();
+      requestRender();
     });
 
     deleteHotspotButton.addEventListener('click', () => {
@@ -785,6 +817,7 @@ async function initViewer() {
       zoneData = zoneData.filter((zone) => zone.id !== selectedZoneId);
       selectedZoneId = zoneData[0].id;
       refreshSelect();
+      requestRender();
     });
 
     saveHotspotsButton.addEventListener('click', async () => {
@@ -803,6 +836,7 @@ async function initViewer() {
       refreshSelect();
       setStatus('Hotspots restablecidos.');
       setTimeout(hideStatus, 900);
+      requestRender();
     });
 
     refreshSelect();
@@ -813,6 +847,7 @@ async function initViewer() {
   function resize() {
     canvas.width = viewer.clientWidth;
     canvas.height = viewer.clientHeight;
+    requestRender();
   }
 
   resize();
@@ -838,6 +873,7 @@ async function initViewer() {
     pitch = Math.max(-1.45, Math.min(1.45, pitch));
     lastX = event.clientX;
     lastY = event.clientY;
+    requestRender();
   });
 
   canvas.addEventListener(
@@ -845,74 +881,75 @@ async function initViewer() {
     (event) => {
       event.preventDefault();
       distance = Math.max(2.4, Math.min(10, distance + event.deltaY * 0.01));
+      requestRender();
     },
     { passive: false }
   );
 
-  function draw() {
+  function renderFrame() {
     const width = canvas.width;
     const height = canvas.height;
+
     context.clearRect(0, 0, width, height);
     context.fillStyle = '#f8f5ef';
     context.fillRect(0, 0, width, height);
 
     const transformed = model.vertices.map((vertex) => rotatePoint(vertex, yaw, pitch));
+    const facesToDraw = [];
 
-    const faces = model.faces
-      .map((face) => {
-        const [a, b, c] = face.indices;
-        const p1 = transformed[a];
-        const p2 = transformed[b];
-        const p3 = transformed[c];
+    for (const face of model.faces) {
+      const [a, b, c] = face.indices;
+      const p1 = transformed[a];
+      const p2 = transformed[b];
+      const p3 = transformed[c];
 
-        const u = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
-        const v = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
-        const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-        const n = Math.hypot(normal[0], normal[1], normal[2]) || 1;
-        const dot = (normal[0] * 0.25 + normal[1] * 0.7 + normal[2] * 0.66) / n;
-        const intensity = Math.max(0.2, dot);
+      const u = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+      const v = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
+      const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 
-        const projected = [
-          projectPoint(p1, width, height, distance),
-          projectPoint(p2, width, height, distance),
-          projectPoint(p3, width, height, distance)
-        ];
+      // Backface culling para acelerar en modelos complejos.
+      if (normal[2] <= 0) {
+        continue;
+      }
 
-        const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
+      const projected = [
+        projectPoint(p1, width, height, distance),
+        projectPoint(p2, width, height, distance),
+        projectPoint(p3, width, height, distance)
+      ];
 
-        const materialColor = model.materials?.[face.material]?.kd;
-        const c1 = model.vertexColors[a] || [0.62, 0.67, 0.74];
-        const c2 = model.vertexColors[b] || [0.62, 0.67, 0.74];
-        const c3 = model.vertexColors[c] || [0.62, 0.67, 0.74];
-        const vertexAverage = [
-          (c1[0] + c2[0] + c3[0]) / 3,
-          (c1[1] + c2[1] + c3[1]) / 3,
-          (c1[2] + c2[2] + c3[2]) / 3
-        ];
+      const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
+      const materialColor = model.materials?.[face.material]?.kd;
+      const pattern = model.patterns?.[face.material] || null;
+      const c1 = model.vertexColors[a] || [0.62, 0.67, 0.74];
+      const c2 = model.vertexColors[b] || [0.62, 0.67, 0.74];
+      const c3 = model.vertexColors[c] || [0.62, 0.67, 0.74];
+      const baseColor = materialColor || [(c1[0] + c2[0] + c3[0]) / 3, (c1[1] + c2[1] + c3[1]) / 3, (c1[2] + c2[2] + c3[2]) / 3];
 
-        const baseColor = materialColor || vertexAverage;
+      facesToDraw.push({ projected, depth, baseColor, pattern });
+    }
 
-        return { projected, depth, intensity, baseColor };
-      })
-      .sort((a, b) => b.depth - a.depth);
+    facesToDraw.sort((a, b) => b.depth - a.depth);
 
-    faces.forEach((face) => {
+    const step = Math.max(1, Math.ceil(facesToDraw.length / MAX_RENDER_FACES));
+    for (let index = 0; index < facesToDraw.length; index += step) {
+      const face = facesToDraw[index];
       context.beginPath();
       context.moveTo(face.projected[0].x, face.projected[0].y);
       context.lineTo(face.projected[1].x, face.projected[1].y);
       context.lineTo(face.projected[2].x, face.projected[2].y);
       context.closePath();
 
-      const light = 0.42 + face.intensity * 0.78;
-      const red = Math.min(255, Math.floor(face.baseColor[0] * 255 * light));
-      const green = Math.min(255, Math.floor(face.baseColor[1] * 255 * light));
-      const blue = Math.min(255, Math.floor(face.baseColor[2] * 255 * light));
-      context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+      if (face.pattern) {
+        context.fillStyle = face.pattern;
+      } else {
+        const red = Math.min(255, Math.floor(face.baseColor[0] * 255));
+        const green = Math.min(255, Math.floor(face.baseColor[1] * 255));
+        const blue = Math.min(255, Math.floor(face.baseColor[2] * 255));
+        context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+      }
       context.fill();
-
-      context.strokeStyle = 'rgba(15, 23, 42, 0.28)';
-      context.stroke();
-    });
+    }
 
     hotspotButtons.forEach(({ zone, button }) => {
       const screen = projectPoint(rotatePoint(zone.point, yaw, pitch), width, height, distance);
@@ -922,11 +959,18 @@ async function initViewer() {
       button.style.top = `${screen.y}px`;
       button.style.display = screen.depth <= 0.2 ? 'none' : 'block';
     });
-
-    requestAnimationFrame(draw);
   }
 
-  draw();
+  function animationLoop() {
+    if (needsRender) {
+      renderFrame();
+      needsRender = false;
+    }
+    requestAnimationFrame(animationLoop);
+  }
+
+  requestRender();
+  animationLoop();
 }
 
 if (!adminMode) {
