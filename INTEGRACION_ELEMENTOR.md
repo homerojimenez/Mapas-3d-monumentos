@@ -4,6 +4,7 @@ Este proyecto ya está preparado para incrustarlo en Elementor mediante una URL 
 
 - **Vista pública (sin editor admin):** `.../embed.html`
 - **Vista admin (editor hotspots):** `.../embed.html?admin=admin-hotspots-2026`
+- **Persistencia global de hotspots:** `assets/hotspots.json` (guardado vía `save-hotspots.php`)
 
 > El editor de hotspots solo aparece con el slug admin en la URL.
 
@@ -37,6 +38,8 @@ https://TU-DOMINIO/ruta-del-proyecto/embed.html?admin=admin-hotspots-2026
 
 Cuando termines la configuración, vuelve a la URL pública sin `?admin=...`.
 
+> Al pulsar **Guardar**, los cambios se escriben en `assets/hotspots.json` para todos los visitantes (requiere servidor PHP y permisos de escritura).
+
 ---
 
 ## Requisitos importantes
@@ -47,6 +50,8 @@ Cuando termines la configuración, vuelve a la URL pública sin `?admin=...`.
   - `app.js`
   - `styles.css`
   - `assets/models/monumento.obj`
+  - `assets/hotspots.json`
+  - `save-hotspots.php`
 - Si tu WordPress y el visor están en dominios distintos, asegúrate de que el servidor permite embebido (`X-Frame-Options` / CSP `frame-ancestors`).
 
 ---

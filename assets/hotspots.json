@@ -1,0 +1,26 @@
+[
+  {
+    "id": "entrada",
+    "label": "Entrada principal",
+    "point": [-0.62, 0.23, 0.98],
+    "title": "Entrada principal",
+    "description": "Vestíbulo monumental con acceso al circuito principal.",
+    "photos": []
+  },
+  {
+    "id": "sala-cupula",
+    "label": "Sala de la cúpula",
+    "point": [0.88, 0.64, 0.14],
+    "title": "Sala de la Cúpula",
+    "description": "Espacio central con valor artístico destacado.",
+    "photos": []
+  },
+  {
+    "id": "galeria-norte",
+    "label": "Galería norte",
+    "point": [0.09, 0.43, -0.98],
+    "title": "Galería norte",
+    "description": "Recorrido con exposición de piezas y cronología.",
+    "photos": []
+  }
+]

@@ -27,9 +27,10 @@ const inputPhotos = document.getElementById('inputPhotos');
 const inputPhotoFiles = document.getElementById('inputPhotoFiles');
 const photoPreview = document.getElementById('photoPreview');
 
-const STORAGE_KEY = 'monumento-hotspots-v1';
 const ADMIN_SLUG = 'admin-hotspots-2026';
 const MODEL_OBJ_PATH = 'assets/models/monumento.obj';
+const HOTSPOTS_JSON_URL = 'assets/hotspots.json';
+const SAVE_ENDPOINT_URL = 'save-hotspots.php';
 const MAX_HOTSPOT_IMAGES = 2;
 
 function isAdminMode() {
@@ -86,38 +87,61 @@ const defaultZones = [
   }
 ];
 
-let zoneData = loadZones();
+let zoneData = structuredClone(defaultZones);
 let selectedZoneId = zoneData[0]?.id || null;
 
-function loadZones() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) {
+function sanitizeZoneList(rawZones) {
+  if (!Array.isArray(rawZones) || !rawZones.length) {
     return structuredClone(defaultZones);
   }
 
+  return rawZones.map((zone, index) => ({
+    id: zone.id || `hotspot-${index + 1}`,
+    label: zone.label || `Hotspot ${index + 1}`,
+    title: zone.title || zone.label || `Hotspot ${index + 1}`,
+    description: zone.description || 'Sin descripción todavía.',
+    photos: normalizePhotos(zone.photos).length ? normalizePhotos(zone.photos) : [...defaultZones[0].photos],
+    point: Array.isArray(zone.point) && zone.point.length === 3 ? zone.point.map(Number) : [0, 0, 0]
+  }));
+}
+
+async function loadZonesFromServer() {
   try {
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed) || !parsed.length) {
-      return structuredClone(defaultZones);
+    const response = await fetch(`${HOTSPOTS_JSON_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('No se pudo cargar hotspots.json');
     }
 
-    return parsed.map((zone, index) => ({
-      id: zone.id || `hotspot-${index + 1}`,
-      label: zone.label || `Hotspot ${index + 1}`,
-      title: zone.title || zone.label || `Hotspot ${index + 1}`,
-      description: zone.description || 'Sin descripción todavía.',
-      photos: normalizePhotos(zone.photos).length ? normalizePhotos(zone.photos) : [...defaultZones[0].photos],
-      point: Array.isArray(zone.point) && zone.point.length === 3 ? zone.point.map(Number) : [0, 0, 0]
-    }));
+    zoneData = sanitizeZoneList(await response.json());
+    selectedZoneId = zoneData[0]?.id || null;
   } catch {
-    return structuredClone(defaultZones);
+    zoneData = structuredClone(defaultZones);
+    selectedZoneId = zoneData[0]?.id || null;
+    setStatus('No se encontró hotspots.json. Usando configuración por defecto.', true);
+    setTimeout(hideStatus, 1400);
   }
 }
 
-function saveZones() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(zoneData));
-  setStatus('Hotspots guardados en este navegador.');
-  setTimeout(hideStatus, 1000);
+async function saveZonesToServer() {
+  const payload = {
+    adminSlug: ADMIN_SLUG,
+    zones: sanitizeZoneList(zoneData)
+  };
+
+  const response = await fetch(SAVE_ENDPOINT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error('No se pudo guardar en servidor');
+  }
+
+  const result = await response.json().catch(() => ({}));
+  if (result?.ok !== true) {
+    throw new Error('Respuesta inválida del guardado');
+  }
 }
 
 function normalizePhotos(rawPhotos) {
@@ -360,6 +384,8 @@ async function initViewer() {
   const context = canvas.getContext('2d');
   viewer.appendChild(canvas);
 
+  await loadZonesFromServer();
+
   let model = buildFallbackMesh();
   try {
     const response = await fetch(MODEL_OBJ_PATH);
@@ -556,12 +582,19 @@ async function initViewer() {
       refreshSelect();
     });
 
-    saveHotspotsButton.addEventListener('click', saveZones);
+    saveHotspotsButton.addEventListener('click', async () => {
+      try {
+        await saveZonesToServer();
+        setStatus('Hotspots guardados para todos los visitantes.');
+        setTimeout(hideStatus, 1200);
+      } catch {
+        setStatus('Error al guardar en servidor. Revisa save-hotspots.php y permisos.', true);
+      }
+    });
 
     resetHotspotsButton.addEventListener('click', () => {
       zoneData = structuredClone(defaultZones);
       selectedZoneId = zoneData[0].id;
-      localStorage.removeItem(STORAGE_KEY);
       refreshSelect();
       setStatus('Hotspots restablecidos.');
       setTimeout(hideStatus, 900);
