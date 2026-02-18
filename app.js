@@ -94,7 +94,6 @@ function normalizePhotos(rawPhotos) {
   if (!Array.isArray(rawPhotos)) {
     return [];
   }
-
   return rawPhotos.map((item) => String(item || '').trim()).filter(Boolean).slice(0, MAX_HOTSPOT_IMAGES);
 }
 
@@ -126,7 +125,7 @@ async function loadZonesFromServer() {
     zoneData = structuredClone(defaultZones);
     selectedZoneId = zoneData[0]?.id || null;
     setStatus('No se encontró hotspots.json. Usando configuración por defecto.', true);
-    setTimeout(hideStatus, 1400);
+    setTimeout(hideStatus, 1600);
   }
 }
 
@@ -192,6 +191,11 @@ function hideStatus() {
   viewerStatus.classList.add('is-hidden');
 }
 
+function supportsCanvas() {
+  const canvas = document.createElement('canvas');
+  return !!canvas.getContext('2d');
+}
+
 function openPanel(zone) {
   panelTitle.textContent = zone.title;
   panelDescription.textContent = zone.description;
@@ -213,7 +217,6 @@ function toggleConfig(show) {
   if (!adminMode) {
     return;
   }
-
   configPanel.classList.toggle('is-open', show);
   configPanel.setAttribute('aria-hidden', String(!show));
   openConfigButton.setAttribute('aria-expanded', String(show));
@@ -236,145 +239,278 @@ if (!adminMode) {
   configPanel.hidden = true;
 }
 
-function getMtlPathFromObjText(objText, objPath) {
-  const mtllibMatch = objText.match(/^mtllib\s+(.+)$/m);
-  const objDir = objPath.includes('/') ? objPath.slice(0, objPath.lastIndexOf('/') + 1) : '';
-  if (mtllibMatch?.[1]) {
-    return `${objDir}${mtllibMatch[1].trim()}`;
+function resolveRelativePath(basePath, relativePath) {
+  if (!relativePath) {
+    return '';
   }
 
-  return objPath.replace(/\.obj$/i, '.mtl');
+  if (/^(https?:)?\/\//i.test(relativePath) || relativePath.startsWith('/')) {
+    return relativePath;
+  }
+
+  const baseDir = basePath.includes('/') ? basePath.slice(0, basePath.lastIndexOf('/') + 1) : '';
+  const baseParts = baseDir.split('/').filter(Boolean);
+  const relParts = relativePath.split('/').filter(Boolean);
+
+  relParts.forEach((part) => {
+    if (part === '.') {
+      return;
+    }
+    if (part === '..') {
+      baseParts.pop();
+    } else {
+      baseParts.push(part);
+    }
+  });
+
+  return `${baseDir.startsWith('/') ? '/' : ''}${baseParts.join('/')}`;
 }
 
-async function loadThreeModules() {
-  const threeModule = await import('https://unpkg.com/three@0.162.0/build/three.module.js');
-  const orbitModule = await import('https://unpkg.com/three@0.162.0/examples/jsm/controls/OrbitControls.js');
-  const objModule = await import('https://unpkg.com/three@0.162.0/examples/jsm/loaders/OBJLoader.js');
-  const mtlModule = await import('https://unpkg.com/three@0.162.0/examples/jsm/loaders/MTLLoader.js');
+function parseMTL(text) {
+  const materials = {};
+  let current = null;
+
+  text.split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      return;
+    }
+
+    const parts = line.split(/\s+/);
+    const keyword = parts[0]?.toLowerCase();
+
+    if (keyword === 'newmtl') {
+      current = parts.slice(1).join(' ');
+      materials[current] = materials[current] || { kd: [0.68, 0.72, 0.78], mapKd: '' };
+      return;
+    }
+
+    if (!current || !materials[current]) {
+      return;
+    }
+
+    if (keyword === 'kd' && parts.length >= 4) {
+      materials[current].kd = [Number(parts[1]) || 0.68, Number(parts[2]) || 0.72, Number(parts[3]) || 0.78].map((v) =>
+        Math.max(0, Math.min(1, v))
+      );
+    }
+
+    if (keyword === 'map_kd' && parts.length >= 2) {
+      materials[current].mapKd = parts.slice(1).join(' ').trim();
+    }
+  });
+
+  return materials;
+}
+
+function parseOBJ(text) {
+  const vertices = [];
+  const vertexColors = [];
+  const faces = [];
+  let mtllib = '';
+  let currentMaterial = '';
+
+  text.split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      return;
+    }
+
+    if (line.startsWith('mtllib ')) {
+      mtllib = line.slice(7).trim();
+      return;
+    }
+
+    if (line.startsWith('usemtl ')) {
+      currentMaterial = line.slice(7).trim();
+      return;
+    }
+
+    if (line.startsWith('v ')) {
+      const [, x, y, z, r, g, b] = line.split(/\s+/);
+      vertices.push([Number(x), Number(y), Number(z)]);
+
+      if ([r, g, b].every((value) => value !== undefined)) {
+        const normalizeColor = (value) => {
+          const num = Number(value);
+          if (Number.isNaN(num)) {
+            return 0.65;
+          }
+          return num > 1 ? Math.max(0, Math.min(1, num / 255)) : Math.max(0, Math.min(1, num));
+        };
+
+        vertexColors.push([normalizeColor(r), normalizeColor(g), normalizeColor(b)]);
+      } else {
+        vertexColors.push([0.63, 0.68, 0.74]);
+      }
+      return;
+    }
+
+    if (line.startsWith('f ')) {
+      const indices = line
+        .slice(2)
+        .trim()
+        .split(/\s+/)
+        .map((part) => Number(part.split('/')[0]) - 1)
+        .filter((index) => Number.isInteger(index) && index >= 0);
+
+      for (let i = 1; i < indices.length - 1; i += 1) {
+        faces.push({ indices: [indices[0], indices[i], indices[i + 1]], material: currentMaterial });
+      }
+    }
+  });
+
+  return { vertices, vertexColors, faces, mtllib };
+}
+
+function buildFallbackMesh() {
+  const vertices = [
+    [-1, -0.8, -1],
+    [1, -0.8, -1],
+    [1, -0.8, 1],
+    [-1, -0.8, 1],
+    [-0.8, 0.8, -0.8],
+    [0.8, 0.8, -0.8],
+    [0.8, 0.8, 0.8],
+    [-0.8, 0.8, 0.8]
+  ];
+  const vertexColors = [
+    [0.56, 0.61, 0.68],
+    [0.64, 0.69, 0.76],
+    [0.6, 0.66, 0.74],
+    [0.54, 0.6, 0.67],
+    [0.75, 0.78, 0.82],
+    [0.7, 0.74, 0.79],
+    [0.73, 0.77, 0.81],
+    [0.67, 0.72, 0.78]
+  ];
+  const faces = [
+    { indices: [0, 1, 2], material: '' },
+    { indices: [0, 2, 3], material: '' },
+    { indices: [4, 5, 6], material: '' },
+    { indices: [4, 6, 7], material: '' },
+    { indices: [0, 1, 5], material: '' },
+    { indices: [0, 5, 4], material: '' },
+    { indices: [1, 2, 6], material: '' },
+    { indices: [1, 6, 5], material: '' },
+    { indices: [2, 3, 7], material: '' },
+    { indices: [2, 7, 6], material: '' },
+    { indices: [3, 0, 4], material: '' },
+    { indices: [3, 4, 7], material: '' }
+  ];
+
+  return { vertices, vertexColors, faces, materials: {} };
+}
+
+function normalizeVertices(vertices) {
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+
+  vertices.forEach(([x, y, z]) => {
+    min[0] = Math.min(min[0], x);
+    min[1] = Math.min(min[1], y);
+    min[2] = Math.min(min[2], z);
+    max[0] = Math.max(max[0], x);
+    max[1] = Math.max(max[1], y);
+    max[2] = Math.max(max[2], z);
+  });
+
+  const center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5];
+  const size = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-6);
+  const scale = 2.2 / size;
+
+  return vertices.map(([x, y, z]) => [(x - center[0]) * scale, (y - center[1]) * scale, (z - center[2]) * scale]);
+}
+
+function rotatePoint(point, yaw, pitch) {
+  const [x, y, z] = point;
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+
+  const x1 = x * cy - z * sy;
+  const z1 = x * sy + z * cy;
+  const y2 = y * cp - z1 * sp;
+  const z2 = y * sp + z1 * cp;
+
+  return [x1, y2, z2];
+}
+
+function projectPoint(point, width, height, distance) {
+  const focal = Math.min(width, height) * 0.9;
+  const depth = point[2] + distance;
+  const safeDepth = Math.max(depth, 0.2);
 
   return {
-    THREE: threeModule,
-    OrbitControls: orbitModule.OrbitControls,
-    OBJLoader: objModule.OBJLoader,
-    MTLLoader: mtlModule.MTLLoader
+    x: width * 0.5 + (point[0] * focal) / safeDepth,
+    y: height * 0.5 - (point[1] * focal) / safeDepth,
+    depth: safeDepth
   };
 }
 
-function loadText(url) {
-  return fetch(url).then((res) => {
-    if (!res.ok) {
-      throw new Error(`No se pudo cargar ${url}`);
-    }
-    return res.text();
-  });
-}
-
-function loadMtl(mtlLoader, mtlPath) {
-  return new Promise((resolve, reject) => {
-    mtlLoader.load(
-      mtlPath,
-      (materials) => {
-        materials.preload();
-        resolve(materials);
-      },
-      undefined,
-      reject
-    );
-  });
-}
-
-function loadObj(objLoader, objPath) {
-  return new Promise((resolve, reject) => {
-    objLoader.load(objPath, resolve, undefined, reject);
-  });
-}
-
 async function initViewer() {
-  await loadZonesFromServer();
-
-  let THREE;
-  let OrbitControls;
-  let OBJLoader;
-  let MTLLoader;
-
-  try {
-    ({ THREE, OrbitControls, OBJLoader, MTLLoader } = await loadThreeModules());
-  } catch {
-    setStatus('No se pudieron cargar las librerías 3D. Revisa la conexión a internet.', true);
+  if (!supportsCanvas()) {
+    setStatus('Tu navegador no soporta canvas 2D.', true);
     return;
   }
 
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#f8f5ef');
+  await loadZonesFromServer();
 
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50);
-  camera.position.set(2.7, 2.1, 4.4);
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  viewer.appendChild(canvas);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  viewer.appendChild(renderer.domElement);
-
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
-  controls.minDistance = 1.6;
-  controls.maxDistance = 12;
-
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x94a3b8, 0.8);
-  const key = new THREE.DirectionalLight(0xffffff, 0.9);
-  key.position.set(4, 6, 5);
-  const fill = new THREE.DirectionalLight(0xffffff, 0.35);
-  fill.position.set(-4, 2, -5);
-  scene.add(hemi, key, fill);
-
-  const modelRoot = new THREE.Group();
-  scene.add(modelRoot);
+  let model = buildFallbackMesh();
 
   try {
-    const objText = await loadText(MODEL_OBJ_PATH);
-    const mtlPath = getMtlPathFromObjText(objText, MODEL_OBJ_PATH);
+    const response = await fetch(MODEL_OBJ_PATH);
+    if (!response.ok) {
+      throw new Error('OBJ no disponible');
+    }
 
-    const mtlLoader = new MTLLoader();
-    const objLoader = new OBJLoader();
+    const objText = await response.text();
+    const parsed = parseOBJ(objText);
+    if (!parsed.vertices.length || !parsed.faces.length) {
+      throw new Error('OBJ inválido');
+    }
 
-    const materials = await loadMtl(mtlLoader, mtlPath);
-    objLoader.setMaterials(materials);
-
-    const model = await loadObj(objLoader, MODEL_OBJ_PATH);
-    const bbox = new THREE.Box3().setFromObject(model);
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxAxis = Math.max(size.x, size.y, size.z, 1e-6);
-    const scale = 2.2 / maxAxis;
-
-    model.position.sub(center);
-    model.scale.setScalar(scale);
-    model.traverse((child) => {
-      if (child.isMesh && child.material) {
-        child.castShadow = false;
-        child.receiveShadow = false;
-        child.material.side = THREE.DoubleSide;
+    const materials = {};
+    if (parsed.mtllib) {
+      const mtlPath = resolveRelativePath(MODEL_OBJ_PATH, parsed.mtllib);
+      try {
+        const mtlResponse = await fetch(mtlPath);
+        if (mtlResponse.ok) {
+          const mtlText = await mtlResponse.text();
+          Object.assign(materials, parseMTL(mtlText));
+        }
+      } catch {
+        // Continúa sin MTL
       }
-    });
+    }
 
-    modelRoot.add(model);
-    controls.target.set(0, 0, 0);
-    controls.update();
+    model = { ...parsed, materials };
 
-    setStatus('Modelo OBJ cargado con materiales MTL y texturas integradas.');
-    setTimeout(hideStatus, 1200);
+    if (Object.keys(materials).length) {
+      setStatus('Modelo OBJ cargado con materiales MTL.');
+    } else {
+      setStatus('Modelo OBJ cargado. MTL no encontrado: usando color del OBJ.');
+    }
+    setTimeout(hideStatus, 1300);
   } catch {
-    const fallback = new THREE.Mesh(
-      new THREE.BoxGeometry(1.8, 1.2, 1.8),
-      new THREE.MeshStandardMaterial({ color: '#94a3b8' })
-    );
-    modelRoot.add(fallback);
-    setStatus('No se pudo cargar OBJ/MTL. Mostrando modelo de prueba.', true);
+    setStatus('No se pudo cargar el modelo OBJ. Mostrando modelo de prueba.', true);
   }
 
+  model.vertices = normalizeVertices(model.vertices);
+
+  let yaw = -0.6;
+  let pitch = 0.35;
+  let distance = 4.2;
+  let isDragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
   let hotspotButtons = [];
-  const tempVector = new THREE.Vector3();
 
   function syncHotspotButtons() {
     hotspotLayer.innerHTML = '';
@@ -502,7 +638,6 @@ async function initViewer() {
       if (incoming.length < encodedImages.filter(Boolean).length) {
         setStatus(`Solo se permiten ${MAX_HOTSPOT_IMAGES} imágenes por hotspot.`, true);
       }
-
       inputPhotos.value = photosToMultiline(zone.photos);
       renderPhotoPreview(zone);
       inputPhotoFiles.value = '';
@@ -561,55 +696,122 @@ async function initViewer() {
   }
 
   function resize() {
-    const width = viewer.clientWidth;
-    const height = viewer.clientHeight;
-    renderer.setSize(width, height, false);
-    camera.aspect = width / Math.max(height, 1);
-    camera.updateProjectionMatrix();
+    canvas.width = viewer.clientWidth;
+    canvas.height = viewer.clientHeight;
   }
 
   resize();
   window.addEventListener('resize', resize);
 
-  const frustumPadding = 0.12;
+  canvas.addEventListener('mousedown', (event) => {
+    isDragging = true;
+    lastX = event.clientX;
+    lastY = event.clientY;
+  });
 
-  function renderHotspots() {
-    const width = viewer.clientWidth;
-    const height = viewer.clientHeight;
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!isDragging) {
+      return;
+    }
+
+    yaw += (event.clientX - lastX) * 0.006;
+    pitch += (event.clientY - lastY) * 0.006;
+    pitch = Math.max(-1.45, Math.min(1.45, pitch));
+    lastX = event.clientX;
+    lastY = event.clientY;
+  });
+
+  canvas.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      distance = Math.max(2.4, Math.min(10, distance + event.deltaY * 0.01));
+    },
+    { passive: false }
+  );
+
+  function draw() {
+    const width = canvas.width;
+    const height = canvas.height;
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = '#f8f5ef';
+    context.fillRect(0, 0, width, height);
+
+    const transformed = model.vertices.map((vertex) => rotatePoint(vertex, yaw, pitch));
+
+    const faces = model.faces
+      .map((face) => {
+        const [a, b, c] = face.indices;
+        const p1 = transformed[a];
+        const p2 = transformed[b];
+        const p3 = transformed[c];
+
+        const u = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+        const v = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
+        const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        const n = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+        const dot = (normal[0] * 0.25 + normal[1] * 0.7 + normal[2] * 0.66) / n;
+        const intensity = Math.max(0.2, dot);
+
+        const projected = [
+          projectPoint(p1, width, height, distance),
+          projectPoint(p2, width, height, distance),
+          projectPoint(p3, width, height, distance)
+        ];
+
+        const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
+
+        const materialColor = model.materials?.[face.material]?.kd;
+        const c1 = model.vertexColors[a] || [0.62, 0.67, 0.74];
+        const c2 = model.vertexColors[b] || [0.62, 0.67, 0.74];
+        const c3 = model.vertexColors[c] || [0.62, 0.67, 0.74];
+        const vertexAverage = [
+          (c1[0] + c2[0] + c3[0]) / 3,
+          (c1[1] + c2[1] + c3[1]) / 3,
+          (c1[2] + c2[2] + c3[2]) / 3
+        ];
+
+        const baseColor = materialColor || vertexAverage;
+
+        return { projected, depth, intensity, baseColor };
+      })
+      .sort((a, b) => b.depth - a.depth);
+
+    faces.forEach((face) => {
+      context.beginPath();
+      context.moveTo(face.projected[0].x, face.projected[0].y);
+      context.lineTo(face.projected[1].x, face.projected[1].y);
+      context.lineTo(face.projected[2].x, face.projected[2].y);
+      context.closePath();
+
+      const light = 0.42 + face.intensity * 0.78;
+      const red = Math.min(255, Math.floor(face.baseColor[0] * 255 * light));
+      const green = Math.min(255, Math.floor(face.baseColor[1] * 255 * light));
+      const blue = Math.min(255, Math.floor(face.baseColor[2] * 255 * light));
+      context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+      context.fill();
+
+      context.strokeStyle = 'rgba(15, 23, 42, 0.28)';
+      context.stroke();
+    });
 
     hotspotButtons.forEach(({ zone, button }) => {
-      tempVector.set(zone.point[0], zone.point[1], zone.point[2]);
-      tempVector.project(camera);
-
-      const visible =
-        tempVector.z > -1 &&
-        tempVector.z < 1 &&
-        tempVector.x > -1 - frustumPadding &&
-        tempVector.x < 1 + frustumPadding &&
-        tempVector.y > -1 - frustumPadding &&
-        tempVector.y < 1 + frustumPadding;
-
-      if (!visible) {
-        button.style.display = 'none';
-        return;
-      }
-
-      button.style.display = 'block';
+      const screen = projectPoint(rotatePoint(zone.point, yaw, pitch), width, height, distance);
       button.dataset.label = zone.label;
       button.ariaLabel = zone.label;
-      button.style.left = `${(tempVector.x * 0.5 + 0.5) * width}px`;
-      button.style.top = `${(-tempVector.y * 0.5 + 0.5) * height}px`;
+      button.style.left = `${screen.x}px`;
+      button.style.top = `${screen.y}px`;
+      button.style.display = screen.depth <= 0.2 ? 'none' : 'block';
     });
+
+    requestAnimationFrame(draw);
   }
 
-  function animate() {
-    controls.update();
-    renderer.render(scene, camera);
-    renderHotspots();
-    requestAnimationFrame(animate);
-  }
-
-  animate();
+  draw();
 }
 
 if (!adminMode) {
