@@ -32,7 +32,6 @@ const MODEL_OBJ_PATH = 'assets/models/monumento.obj';
 const HOTSPOTS_JSON_URL = 'assets/hotspots.json';
 const SAVE_ENDPOINT_URL = 'save-hotspots.php';
 const MAX_HOTSPOT_IMAGES = 2;
-const MAX_RENDER_FACES = 18000;
 
 function isAdminMode() {
   const params = new URLSearchParams(window.location.search);
@@ -384,15 +383,14 @@ function extractMapKdPath(rawValue) {
   return fileTokens.join(' ').trim();
 }
 
-async function enrichMaterials(materials, mtlPath, context) {
-  const patterns = {};
+async function enrichMaterials(materials, mtlPath) {
   const entries = Object.entries(materials || {});
   if (!entries.length) {
-    return { materials, patterns };
+    return materials;
   }
 
   await Promise.all(
-    entries.map(async ([name, material]) => {
+    entries.map(async ([, material]) => {
       const mapPath = extractMapKdPath(material.mapKd);
       if (!mapPath) {
         return;
@@ -401,31 +399,13 @@ async function enrichMaterials(materials, mtlPath, context) {
       const resolvedPath = resolveRelativePath(mtlPath, mapPath);
       const averageColor = await getAverageColorFromImage(resolvedPath);
       if (averageColor) {
-        materials[name].kd = averageColor;
-      }
-
-      try {
-        const image = await new Promise((resolve, reject) => {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = resolvedPath;
-        });
-
-        const pattern = context.createPattern(image, 'repeat');
-        if (pattern) {
-          patterns[name] = pattern;
-        }
-      } catch {
-        // Si no se puede crear patrón, usamos color Kd
+        material.kd = averageColor;
       }
     })
   );
 
-  return { materials, patterns };
+  return materials;
 }
-
 function parseOBJ(text) {
   const vertices = [];
   const vertexColors = [];
@@ -522,7 +502,7 @@ function buildFallbackMesh() {
     { indices: [3, 4, 7], material: '' }
   ];
 
-  return { vertices, vertexColors, faces, materials: {}, patterns: {} };
+  return { vertices, vertexColors, faces, materials: {} };
 }
 
 function normalizeVertices(vertices) {
@@ -619,13 +599,11 @@ async function initViewer() {
       }
     }
 
-    let patterns = {};
     if (loadedMtlPath) {
-      const enriched = await enrichMaterials(materials, loadedMtlPath, context);
-      patterns = enriched.patterns;
+      await enrichMaterials(materials, loadedMtlPath);
     }
 
-    model = { ...parsed, materials, patterns };
+    model = { ...parsed, materials };
 
     if (Object.keys(materials).length) {
       setStatus('Modelo OBJ cargado con materiales y texturas.');
@@ -907,10 +885,6 @@ async function initViewer() {
       const v = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
       const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 
-      // Backface culling para acelerar en modelos complejos.
-      if (normal[2] <= 0) {
-        continue;
-      }
 
       const projected = [
         projectPoint(p1, width, height, distance),
@@ -920,19 +894,17 @@ async function initViewer() {
 
       const depth = (projected[0].depth + projected[1].depth + projected[2].depth) / 3;
       const materialColor = model.materials?.[face.material]?.kd;
-      const pattern = model.patterns?.[face.material] || null;
       const c1 = model.vertexColors[a] || [0.62, 0.67, 0.74];
       const c2 = model.vertexColors[b] || [0.62, 0.67, 0.74];
       const c3 = model.vertexColors[c] || [0.62, 0.67, 0.74];
       const baseColor = materialColor || [(c1[0] + c2[0] + c3[0]) / 3, (c1[1] + c2[1] + c3[1]) / 3, (c1[2] + c2[2] + c3[2]) / 3];
 
-      facesToDraw.push({ projected, depth, baseColor, pattern });
+      facesToDraw.push({ projected, depth, baseColor });
     }
 
     facesToDraw.sort((a, b) => b.depth - a.depth);
 
-    const step = Math.max(1, Math.ceil(facesToDraw.length / MAX_RENDER_FACES));
-    for (let index = 0; index < facesToDraw.length; index += step) {
+    for (let index = 0; index < facesToDraw.length; index += 1) {
       const face = facesToDraw[index];
       context.beginPath();
       context.moveTo(face.projected[0].x, face.projected[0].y);
@@ -940,14 +912,15 @@ async function initViewer() {
       context.lineTo(face.projected[2].x, face.projected[2].y);
       context.closePath();
 
-      if (face.pattern) {
-        context.fillStyle = face.pattern;
-      } else {
-        const red = Math.min(255, Math.floor(face.baseColor[0] * 255));
-        const green = Math.min(255, Math.floor(face.baseColor[1] * 255));
-        const blue = Math.min(255, Math.floor(face.baseColor[2] * 255));
-        context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
-      }
+      const p1 = face.projected[0];
+      const p2 = face.projected[1];
+      const p3 = face.projected[2];
+      const area = Math.abs((p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x));
+      const light = Math.max(0.45, Math.min(1.05, 1 - area / (canvas.width * canvas.height * 0.15)));
+      const red = Math.min(255, Math.floor(face.baseColor[0] * 255 * light));
+      const green = Math.min(255, Math.floor(face.baseColor[1] * 255 * light));
+      const blue = Math.min(255, Math.floor(face.baseColor[2] * 255 * light));
+      context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
       context.fill();
     }
 
