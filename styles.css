@@ -1,0 +1,365 @@
+:root {
+  color-scheme: light;
+  --surface: #ffffff;
+  --accent: #0ea5e9;
+  --text: #1e293b;
+  --viewer-bg: #f8f5ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--text);
+  background: linear-gradient(160deg, #dfe8f7, #f8fafc);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.embed-root {
+  width: min(1200px, 100%);
+}
+
+.viewer-card {
+  position: relative;
+  width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+  background: var(--viewer-bg);
+}
+
+.viewer3d {
+  width: 100%;
+  height: min(78vh, 760px);
+}
+
+.viewer3d canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+
+.viewer3d canvas:active {
+  cursor: grabbing;
+}
+
+.viewer-status {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 8;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+  max-width: 90%;
+  text-align: center;
+}
+
+.viewer-status.is-hidden {
+  display: none;
+}
+
+.hotspot-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.hotspot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgba(14, 165, 233, 0.25);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.hotspot::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 22px;
+  background: rgba(15, 23, 42, 0.95);
+  color: #f8fafc;
+  padding: 0.3rem 0.55rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1;
+  opacity: 0;
+  white-space: nowrap;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.hotspot:hover::after,
+.hotspot:focus-visible::after {
+  opacity: 1;
+}
+
+.config-toggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 9;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.82);
+  color: #f8fafc;
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.config-panel {
+  position: absolute;
+  top: 56px;
+  right: 14px;
+  width: min(360px, calc(100% - 28px));
+  max-height: calc(100% - 70px);
+  padding-bottom: 64px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+  z-index: 9;
+  transform: translateY(-6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.config-panel.is-open {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.config-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #475569;
+}
+
+.config-body {
+  padding: 0.85rem;
+  max-height: calc(100% - 48px - 64px);
+  overflow-y: auto;
+  padding-bottom: 0.5rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+  margin-bottom: 0.55rem;
+}
+
+.field input,
+.field textarea,
+.field select {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+}
+
+.coords {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.45rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.45rem;
+  margin: 0.45rem 0 0.6rem;
+}
+
+.row button {
+  flex: 1;
+}
+
+.primary-btn,
+.secondary-btn,
+.danger-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.primary-btn {
+  background: #0284c7;
+  color: white;
+}
+
+.secondary-btn {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.danger-btn {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+
+.photo-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin: 0.3rem 0 0.55rem;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.photo-item {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.photo-item img {
+  width: 100%;
+  height: 64px;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-remove {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  border: none;
+  border-radius: 999px;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  cursor: pointer;
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+}
+
+.config-help {
+  margin: 0.45rem 0;
+  color: #475569;
+  font-size: 0.8rem;
+}
+
+
+.config-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid #e2e8f0;
+  z-index: 4;
+}
+
+
+.offcanvas {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(420px, 95%);
+  height: 100%;
+  background: var(--surface);
+  box-shadow: -10px 0 24px rgba(15, 23, 42, 0.24);
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+}
+
+.offcanvas.is-open {
+  transform: translateX(0);
+}
+
+.offcanvas-close {
+  margin-left: auto;
+  margin-right: 0.5rem;
+  margin-top: 0.5rem;
+  border: none;
+  background: transparent;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #475569;
+}
+
+.panel-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.6rem 1rem 0.4rem;
+}
+
+.panel-gallery img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.panel-body {
+  padding: 0.25rem 1rem 1.5rem;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  body {
+    padding: 0;
+  }
+
+  .viewer-card {
+    border-radius: 0;
+  }
+
+  .viewer3d {
+    height: 100vh;
+  }
+
+  .offcanvas {
+    width: 100%;
+  }
+}

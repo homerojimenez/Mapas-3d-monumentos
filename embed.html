@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Visor 3D Monumento (Embed)</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: transparent;
+      }
+
+      body {
+        display: block;
+        padding: 0;
+        min-height: 0;
+      }
+
+      .embed-root {
+        width: 100%;
+      }
+
+      .viewer-card {
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .viewer3d {
+        height: 100vh;
+        min-height: 560px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="embed-root">
+      <section class="viewer-card" aria-label="Visor 3D">
+        <div id="viewer3d" class="viewer3d" role="img" aria-label="Plano 3D del monumento"></div>
+        <div id="viewerStatus" class="viewer-status">Cargando visor 3D…</div>
+        <div id="hotspotLayer" class="hotspot-layer" aria-live="polite"></div>
+
+        <button id="openConfig" class="config-toggle" type="button" aria-expanded="false">
+          Configurar hotspots
+        </button>
+
+        <aside id="configPanel" class="config-panel" aria-hidden="true">
+          <div class="config-header">
+            <h2>Editor de hotspots</h2>
+            <button id="closeConfig" type="button" class="icon-btn" aria-label="Cerrar configuración">×</button>
+          </div>
+
+          <div class="config-body">
+            <label class="field">
+              Punto a editar
+              <select id="hotspotSelect"></select>
+            </label>
+
+            <div class="row">
+              <button id="addHotspot" type="button" class="secondary-btn">+ Nuevo hotspot</button>
+              <button id="deleteHotspot" type="button" class="danger-btn">Eliminar</button>
+            </div>
+
+            <label class="field">Etiqueta<input id="inputLabel" type="text" /></label>
+            <label class="field">Título del panel<input id="inputTitle" type="text" /></label>
+            <label class="field">Descripción<textarea id="inputDescription" rows="3"></textarea></label>
+
+            <div class="coords">
+              <label class="field">X <input id="inputX" type="number" step="0.01" min="-2" max="2" /></label>
+              <label class="field">Y <input id="inputY" type="number" step="0.01" min="-2" max="2" /></label>
+              <label class="field">Z <input id="inputZ" type="number" step="0.01" min="-2" max="2" /></label>
+            </div>
+
+            <label class="field">
+              Imágenes (máximo 2, una URL por línea)
+              <textarea id="inputPhotos" rows="4" placeholder="https://...&#10;https://..."></textarea>
+            </label>
+            <label class="field">
+              O subir imágenes desde tu ordenador
+              <input id="inputPhotoFiles" type="file" accept="image/*" />
+            </label>
+            <div id="photoPreview" class="photo-preview"></div>
+
+            <p class="config-help">Tip: mueve X/Y/Z hasta que el punto quede en la zona correcta del modelo.</p>
+
+            <div class="row config-actions">
+              <button id="saveHotspots" type="button" class="primary-btn">Guardar cambios</button>
+              <button id="resetHotspots" type="button" class="secondary-btn">Restablecer</button>
+            </div>
+          </div>
+        </aside>
+
+        <aside id="zonePanel" class="offcanvas" aria-hidden="true">
+          <button class="offcanvas-close" id="closePanel" aria-label="Cerrar panel">×</button>
+          <div id="panelGallery" class="panel-gallery"></div>
+          <div class="panel-body">
+            <h2 id="panelTitle">Zona</h2>
+            <p id="panelDescription"></p>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
